@@ -1,0 +1,16 @@
+{
+  "name": "spread-paywall",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "@coinbase/x402": "^2.1.0",
+    "@x402/evm": "^2.28.0",
+    "@x402/express": "^2.28.0",
+    "@x402/svm": "^2.28.0",
+    "express": "^4.22.3"
+  }
+}
