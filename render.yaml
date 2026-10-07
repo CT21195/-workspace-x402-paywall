@@ -1,9 +1,0 @@
-services:
-  - type: web
-    name: spread-paywall
-    runtime: docker
-    plan: free
-    healthCheckPath: /
-    envVars:
-      - key: PORT
-        value: 3402
