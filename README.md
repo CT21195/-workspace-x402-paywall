@@ -1,0 +1,91 @@
+# Spread Paywall API
+
+78 pay-per-call API endpoints, monetized with [x402 v2](https://www.x402.org/). No API keys, no accounts, no signups — callers pay per request in USDC and get JSON back.
+
+**Live:** https://workspace-x402-paywall.onrender.com
+**Machine-readable:** [/openapi.json](https://workspace-x402-paywall.onrender.com/openapi.json) · [/.well-known/x402.json](https://workspace-x402-paywall.onrender.com/.well-known/x402.json)
+
+## How it works
+
+Every paid endpoint returns **HTTP 402** with payment terms in the response body: x402 v2, `exact` scheme, paid with an EIP-3009 `TransferWithAuthorization` in USDC. A facilitator settles on-chain, so the payer's wallet only signs — no gas needed.
+
+- **Pay on Base:** USDC → `0xD7CDd563e8F6A249B076A702b7e2C233CCF3481d`
+- **Pay on Solana:** USDC → `E21AWkUtLz4BP7AaT82CF7v86Kmv4YzN4NAR1FQnEmqy`
+
+Unpaid request → `402` with the price and payment instructions. Paid request → `200` with JSON.
+
+## Pricing
+
+| Tier | Price (USDC) | Covers |
+|---|---|---|
+| Utility | $0.001 | block height, slot, base64, hashing, UUIDs, IP, time |
+| Chain reads | $0.003 | ETH / SOL / ERC-20 / SPL balances |
+| Standard | $0.005 | spreads, search, pump.fun, stocks, crypto data, reference data |
+| AI | $0.01 | web scraping, PDF scraping, LLM Q&A, image generation |
+| Verification | $0.01 | NPI validation |
+| Alpha | $0.05 | whale watching, RugCheck audits, wallet portfolios |
+
+## Endpoints
+
+### On-chain data
+| Endpoint | Price | What it returns |
+|---|---|---|
+| `GET /chain/balance?address=0x…` | $0.003 | Native ETH balance of a Base address |
+| `GET /chain/erc20-balance?address=0x…&token=0x…` | $0.003 | ERC-20 token balance on Base (auto-detects decimals) |
+| `GET /chain/block-number` | $0.001 | Current Base block number |
+| `GET /chain/sol-balance?wallet=…` | $0.003 | Native SOL balance of a Solana wallet |
+| `GET /chain/spl-balance?wallet=…&mint=…` | $0.003 | SPL token balances for a wallet and mint |
+| `GET /chain/slot` | $0.001 | Current Solana slot |
+
+### Trading & spreads — $0.005
+- `GET /spread` — live SOL spreads across CEXs and DEXs, best buy/sell venues
+- `GET /spread/base?token=0x…` — cross-DEX spreads on Base for any token (default WETH), up to 5 venues
+
+### Alpha — $0.05
+- `GET /whale-watch` — large-wallet movement alerts *(needs `HELIUS_API_KEY`)*
+- `GET /solana/audit?mint=…` — RugCheck token safety audit
+- `GET /wallet/portfolio?wallet=…` — wallet holdings breakdown *(needs `HELIUS_API_KEY`)*
+
+### Verification
+- `GET /verify/npi?npi=…` — $0.01 — validates a 10-digit NPI checksum + CMS NPPES registry data
+- `GET /verify/dea?dea=…` — $0.005 — validates a DEA number format and checksum
+
+### Scraping & AI — $0.01
+- `GET /scrape?url=…` — web page to text
+- `GET /scrape/pdf?url=…` — PDF to text
+- `GET /ai/ask?prompt=…` — LLM text response
+- `GET /ai/image?prompt=…` — 1024×1024 generated image
+
+### Search — $0.005
+One query param (`?q=…`) across: `/search/npm`, `/search/wikipedia`, `/search/arxiv`, `/search/sec`, `/search/hn`, `/search/geo`, `/search/fda`, `/search/github`, `/lookup/pypi`
+
+### pump.fun & memes — $0.005
+`/pump/trending`, `/pump/new`, `/pump/migrating`, `/pump/chains`, `/meme/trending`, `/meme/new`, `/meme/token`
+
+### Markets & crypto — $0.005
+`/stocks/price`, `/stocks/list`, `/solana/top100`, `/crypto/prices`, `/crypto/ohlcv`, `/btc/fees`, `/defi/tvl`, `/defi/yields`, `/fx/rates`, `/fx/convert`, `/markets/polymarket`, `/finance/tickers`
+
+### Reference data — $0.005
+Weather, IP/zip/sun/elevation geo lookups, FBI/gov datasets, clinical trials, gene info, papers, quakes, ISS/SpaceX, StackOverflow, DNS, crates, definitions, books, holidays, TV, anime, lyrics, football, NHL, Bluesky users, food nutrition, remote jobs.
+
+### Utilities — $0.001
+`/utils/base64`, `/utils/hash`, `/utils/uuid`, `/utils/ip`, `/utils/time`
+
+## Key-gated endpoints
+
+`/whale-watch` and `/wallet/portfolio` need a Helius API key and return `503` until `HELIUS_API_KEY` is set on the server. Everything else works with no keys.
+
+## Deployment
+
+Single-file Node.js server (`server.js`), currently on Render's free tier. Environment variables:
+
+| Variable | Required | Enables |
+|---|---|---|
+| `HELIUS_API_KEY` | No | `/whale-watch`, `/wallet/portfolio` |
+| `CDP_API_KEY_ID` / `CDP_API_KEY_SECRET` | Yes | x402 settlement via the Coinbase CDP facilitator |
+
+Replacing `server.js` with a new version does not clear environment variables.
+
+## Discovery
+
+Indexed on [x402scan](https://www.x402scan.com/server/a8cef910-5233-45ee-88cd-6f185ea4915a) and the Coinbase Bazaar. Full endpoint list with live prices is always at `/openapi.json`.
