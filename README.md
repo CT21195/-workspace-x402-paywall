@@ -1,6 +1,6 @@
 # Spread Paywall API
 
-126 pay-per-call API endpoints, monetized with [x402 v2](https://www.x402.org/). No API keys, no accounts, no signups — callers pay per request in USDC and get JSON back.
+127 pay-per-call API endpoints, monetized with [x402 v2](https://www.x402.org/). No API keys, no accounts, no signups — callers pay per request in USDC and get JSON back.
 
 **Live:** https://workspace-x402-paywall.onrender.com
 **Machine-readable:** [/openapi.json](https://workspace-x402-paywall.onrender.com/openapi.json) · [/.well-known/x402.json](https://workspace-x402-paywall.onrender.com/.well-known/x402.json)
