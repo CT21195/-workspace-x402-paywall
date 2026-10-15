@@ -1251,6 +1251,27 @@ const VERIFY_FNS = {
       return { valid: false, reason: 'invalid JSON: ' + e.message, ...(m ? { error_at: +m[1], context: v.slice(Math.max(0, +m[1] - 20), +m[1] + 20) } : {}) };
     }
   },
+  // ---- Smart contract surface linter (text in, no downloads, no subprocesses) ----
+  contract(v) {
+    const code = (v || '').trim();
+    if (code.length > 10000) return { valid: false, chars_scanned: code.length, reason: 'snippet too large (max 10,000 characters)' };
+    const warnings = [];
+    // EVM / Solidity surface-level checks
+    if (/\bselfdestruct\s*\(/.test(code)) warnings.push('selfdestruct() allows contract destruction and fund draining');
+    if (/\bdelegatecall\s*\(/.test(code)) warnings.push('delegatecall() can allow arbitrary code execution in the caller context');
+    if (/\btx\.origin\b/.test(code)) warnings.push('tx.origin used — vulnerable to phishing; use msg.sender for authorization');
+    if (/\bblock\.timestamp\b/.test(code)) warnings.push('block.timestamp used — miner-manipulable; unsafe for randomness or critical logic');
+    if (/\btransferFrom\s*\(/.test(code) && !/\brequire\s*\(/.test(code)) warnings.push('transferFrom() without a visible require() check');
+    // Solana / Rust surface-level checks
+    if (/\bunsafe\s*\{/.test(code)) warnings.push('unsafe{} block detected — bypasses Rust memory safety guarantees');
+    if (/\bAccountInfo\b/.test(code) && !/\bis_signer\b/.test(code)) warnings.push('AccountInfo used without a visible is_signer check — possible missing authorization');
+    return {
+      chars_scanned: code.length,
+      issues_found: warnings.length,
+      warnings: warnings.length ? warnings : ['No basic surface-level issues detected'],
+      disclaimer: 'Regex-based surface linter only — not a formal security audit. False positives and false negatives are expected.',
+    };
+  },
 }; // end VERIFY_FNS
 
 // ---- endpoint table: path, price tier const name, query param, summary, operationId ----
@@ -1306,6 +1327,7 @@ const VERIFY_APIS = [
   { key: 'btcAddress', path: '/verify/address/btc', price: 'UTILS_PRICE', param: 'address', op: 'verifyBtcAddress', summary: 'Validates Bitcoin P2PKH/P2SH/bech32 addresses' },
   { key: 'polkadotAddress', path: '/verify/address/polkadot', price: 'UTILS_PRICE', param: 'address', op: 'verifyPolkadotAddress', summary: 'Validates a Polkadot/Substrate ss58 address checksum' },
   { key: 'ens', path: '/verify/ens', price: 'UTILS_PRICE', param: 'name', op: 'verifyEns', summary: 'Validates an ENS name against EIP-137 normalization rules' },
+  { key: 'contract', path: '/verify/contract', price: 'UTILS_PRICE', param: 'code', op: 'verifyContract', summary: 'Surface-level smart-contract linter: flags dangerous Solidity/Rust patterns (selfdestruct, delegatecall, tx.origin, unsafe blocks, missing signer checks)' },
   // Dev
   { key: 'semver', path: '/verify/semver', price: 'UTILS_PRICE', param: 'version', op: 'verifySemver', summary: 'Validates Semantic Versioning 2.0.0 format' },
   { key: 'cron', path: '/verify/cron', price: 'UTILS_PRICE', param: 'cron', op: 'verifyCron', summary: 'Validates a cron expression and computes the next run time' },
@@ -2388,9 +2410,9 @@ registerMasterRoutes(app);
 app.get('/openapi.json', (req, res) => res.json({
   openapi: '3.1.0',
   info: {
-    title: 'x402 master data API — 126 endpoints',
+    title: 'x402 master data API — 127 endpoints',
     version: '2.0.0',
-    description: '126 pay-per-call APIs: AI text/image generation ($0.01), Polymarket odds, crypto prices, DeFi yields, FX rates, weather, IP/geo, FBI wanted, SEC tickers, clinical trials, 250M academic papers, Stack Overflow, meme-coin launchpads (pump.fun, Clanker, Four.meme, SunPump), tokenized stocks, Solana top 100, Base DEX spreads, and 40+ more. $0.005/call standard. USDC on Base and Solana via x402.',
+    description: '127 pay-per-call APIs: AI text/image generation ($0.01), Polymarket odds, crypto prices, DeFi yields, FX rates, weather, IP/geo, FBI wanted, SEC tickers, clinical trials, 250M academic papers, Stack Overflow, meme-coin launchpads (pump.fun, Clanker, Four.meme, SunPump), tokenized stocks, Solana top 100, Base DEX spreads, and 40+ more. $0.005/call standard. USDC on Base and Solana via x402.',
     contact: { email: 'ctiernan21@gmail.com' },
   },
   servers: [{ url: API_URL }],
@@ -3047,8 +3069,8 @@ app.get('/.well-known/x402.json', (req, res) => {
   ];
   const ep = (path, description, price) => ({ path, method: 'GET', description, price, accepts: acceptsForDoc(price) });
   res.json({
-    name: 'x402 master data API — 126 endpoints',
-    description: '126 pay-per-call APIs: AI text/image generation ($0.01), Polymarket odds, crypto prices, DeFi yields, FX rates, weather, IP/geo, FBI wanted, SEC tickers, clinical trials, 250M academic papers, Stack Overflow, meme-coin launchpads (pump.fun, Clanker, Four.meme, SunPump), tokenized stocks, Solana top 100, Base DEX spreads, and 40+ more. $0.005/call standard. USDC on Base and Solana via x402.',
+    name: 'x402 master data API — 127 endpoints',
+    description: '127 pay-per-call APIs: AI text/image generation ($0.01), Polymarket odds, crypto prices, DeFi yields, FX rates, weather, IP/geo, FBI wanted, SEC tickers, clinical trials, 250M academic papers, Stack Overflow, meme-coin launchpads (pump.fun, Clanker, Four.meme, SunPump), tokenized stocks, Solana top 100, Base DEX spreads, and 40+ more. $0.005/call standard. USDC on Base and Solana via x402.',
     url: API_URL,
     x402Version: 2,
     networks: [...Object.values(EVM_NETWORKS), SOL_NETWORK],
