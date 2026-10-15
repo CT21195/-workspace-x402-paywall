@@ -542,6 +542,7 @@ function registerMasterRoutes(app) {
       const q = {};
       for (const p of (a.params || [])) q[p.n] = req.query[p.n];
       try {
+        console.log(`PAID ${a.path} ${new Date().toISOString()}`); // buyer analytics: which endpoint sold
         let out = a.passthrough ? a.map(null, q) : a.map(await fetchUpstreamCached(a.url(q), 300000, 12000, a.headers || {}), q);
         if (req.query.fields) {
           const fs = String(req.query.fields).split(',').map(s => s.trim()).filter(Boolean);
@@ -1336,6 +1337,7 @@ function registerVerifyRoutes(app) {
       const val = (req.query[v.param] || '').toString();
       if (!val.trim()) return res.status(400).json({ error: `missing ?${v.param}= parameter` });
       try {
+        console.log(`PAID ${v.path} ${new Date().toISOString()}`); // buyer analytics: which endpoint sold
         res.json(await VERIFY_FNS[v.key](val));
       } catch (e) {
         res.status(502).json({ error: `${v.path} failed: ${String(e.message || e)}` });
