@@ -1,6 +1,6 @@
 # Spread Paywall API
 
-78 pay-per-call API endpoints, monetized with [x402 v2](https://www.x402.org/). No API keys, no accounts, no signups — callers pay per request in USDC and get JSON back.
+126 pay-per-call API endpoints, monetized with [x402 v2](https://www.x402.org/). No API keys, no accounts, no signups — callers pay per request in USDC and get JSON back.
 
 **Live:** https://workspace-x402-paywall.onrender.com
 **Machine-readable:** [/openapi.json](https://workspace-x402-paywall.onrender.com/openapi.json) · [/.well-known/x402.json](https://workspace-x402-paywall.onrender.com/.well-known/x402.json)
@@ -22,7 +22,7 @@ Unpaid request → `402` with the price and payment instructions. Paid request �
 | Chain reads | $0.003 | ETH / SOL / ERC-20 / SPL balances |
 | Standard | $0.005 | spreads, search, pump.fun, stocks, crypto data, reference data |
 | AI | $0.01 | web scraping, PDF scraping, LLM Q&A, image generation |
-| Verification | $0.01 | NPI validation |
+| Verification | $0.001–$0.01 | 50 validators: IBAN, VIN, ISBN, UPC/EAN, crypto addresses, email MX, domain RDAP, SSL, JWT, cron, and more |
 | Alpha | $0.05 | whale watching, RugCheck audits, wallet portfolios |
 
 ## Endpoints
@@ -46,9 +46,16 @@ Unpaid request → `402` with the price and payment instructions. Paid request �
 - `GET /solana/audit?mint=…` — RugCheck token safety audit
 - `GET /wallet/portfolio?wallet=…` — wallet holdings breakdown *(needs `HELIUS_API_KEY`)*
 
-### Verification
+### Verification — 50 endpoints
 - `GET /verify/npi?npi=…` — $0.01 — validates a 10-digit NPI checksum + CMS NPPES registry data
 - `GET /verify/dea?dea=…` — $0.005 — validates a DEA number format and checksum
+- **Finance** ($0.005): `/verify/iban`, `/verify/routing`, `/verify/card`, `/verify/swift`, `/verify/isin`, `/verify/cusip`, `/verify/sedol`, `/verify/upi`
+- **Identity** ($0.005): `/verify/vat`, `/verify/ein`, `/verify/lei`, `/verify/ssn`, `/verify/passport/mrz`, `/verify/nino`, `/verify/sin`
+- **Retail & logistics** ($0.005): `/verify/upc`, `/verify/ean`, `/verify/isbn`, `/verify/vin`, `/verify/usps`, `/verify/ups`, `/verify/fedex`, `/verify/imei`, `/verify/meid`, `/verify/container`
+- **Network** ($0.005): `/verify/email` ($0.01, live MX lookup), `/verify/domain` (RDAP), `/verify/ssl`; ($0.001): `/verify/ipv4`, `/verify/ipv6`, `/verify/mac`, `/verify/asn`, `/verify/e164`
+- **Security** ($0.01 `/verify/pwned`, k-anonymity breach check; $0.001): `/verify/jwt`, `/verify/base64`, `/verify/hash/md5`, `/verify/hash/sha256`, `/verify/uuid`, `/verify/ulid`
+- **Crypto addresses** ($0.001): `/verify/address/evm` (EIP-55), `/verify/address/solana`, `/verify/address/btc`, `/verify/address/polkadot`, `/verify/ens`
+- **Dev** ($0.001): `/verify/semver`, `/verify/cron`, `/verify/json`
 
 ### Scraping & AI — $0.01
 - `GET /scrape?url=…` — web page to text
