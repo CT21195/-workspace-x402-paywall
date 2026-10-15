@@ -21,6 +21,17 @@ const UTILS_PRICE = '$0.001'; // USDC per utility call (a tenth of a cent — ma
 const VERIFY_PRICE = '$0.01'; // USDC per verification request
 const ALPHA_PRICE = '$0.05'; // USDC per whale-alpha request (premium tier)
 const CHAIN_PRICE = '$0.003'; // USDC per chain-read request (matches proven x402 price point)
+// Disposable-email domain blocklist (public GitHub list, refreshed daily; keyless)
+let DISPOSABLE_DOMAINS = new Set();
+async function refreshDisposableList() {
+  try {
+    const t = await fetchText('https://raw.githubusercontent.com/disposable-email-domains/disposable-email-domains/main/disposable_email_blocklist.conf', 15000);
+    const s = new Set(t.split('\n').map(x => x.trim().toLowerCase()).filter(x => x && !x.startsWith('#')));
+    if (s.size > 1000) { DISPOSABLE_DOMAINS = s; console.log(`disposable-email blocklist loaded (${s.size} domains)`); }
+  } catch (e) { console.log('disposable-email blocklist refresh failed:', String((e && e.message) || e)); }
+}
+refreshDisposableList();
+setInterval(refreshDisposableList, 24 * 3600 * 1000);
 const HELIUS_API_KEY = process.env.HELIUS_API_KEY || '';
 // EVM networks: the free openx402.ai facilitator only settles exact-scheme
 // payments on Base. Other chains (eth/arbitrum/optimism/polygon/bsc) need
@@ -681,6 +692,22 @@ function bech32Decode(addr) {
   if (bits >= 5 || ((acc << (8 - bits)) & 0xff) !== 0) return null;
   return { hrp, version: ver, program: prog, encoding: isBech32 ? 'bech32' : 'bech32m' };
 }
+// Plain BIP173 bech32 decode (no segwit rules) — for BOLT11 Lightning invoices,
+// which are longer than 90 chars and carry no witness version.
+function bech32PlainDecode(s) {
+  if (typeof s !== 'string') return null;
+  const hasLower = /[a-z]/.test(s), hasUpper = /[A-Z]/.test(s);
+  if (hasLower && hasUpper) return null;
+  const a = s.toLowerCase();
+  const pos = a.lastIndexOf('1');
+  if (pos < 1 || pos + 7 > a.length || a.length > 2048) return null;
+  const hrp = a.slice(0, pos);
+  const vals = [];
+  for (const ch of a.slice(pos + 1)) { const v = BECH32_ALPH.indexOf(ch); if (v < 0) return null; vals.push(v); }
+  const hrpVals = [...hrp].map(c => c.charCodeAt(0) >> 5).concat([0], [...hrp].map(c => c.charCodeAt(0) & 31));
+  if (bech32Polymod(hrpVals.concat(vals)) !== 1) return null;
+  return { hrp, data: vals.slice(0, -6) }; // strip 6-char checksum
+}
 async function fetchText(url, ms = 9000) {
   const ctrl = new AbortController();
   const t = setTimeout(() => ctrl.abort(), ms);
@@ -1272,6 +1299,68 @@ const VERIFY_FNS = {
       disclaimer: 'Regex-based surface linter only — not a formal security audit. False positives and false negatives are expected.',
     };
   },
+  emailDisposable(v) {
+    const m = String(v || '').trim().toLowerCase().match(/@([a-z0-9.-]+\.[a-z]{2,})$/);
+    if (!m) return { input: v, valid: false, reason: 'not an email address' };
+    const domain = m[1];
+    if (!DISPOSABLE_DOMAINS.size) return { input: v, domain, disposable: null, reason: 'blocklist unavailable (fetch failed)' };
+    return { input: v, domain, disposable: DISPOSABLE_DOMAINS.has(domain), blocklist_size: DISPOSABLE_DOMAINS.size };
+  },
+  passwordStrength(v) {
+    const s = String(v || '');
+    const common = new Set(['123456','password','123456789','qwerty','12345678','111111','12345','123123','abc123','password1','1234567','qwerty123','admin','letmein','welcome','monkey','dragon','football','1234567890','654321','1q2w3e4r','baseball','superman','trustno1','iloveyou','starwars']);
+    const feedback = [];
+    const hasLower = /[a-z]/.test(s), hasUpper = /[A-Z]/.test(s), hasDigit = /\d/.test(s), hasSym = /[^a-zA-Z0-9]/.test(s);
+    const classes = [hasLower, hasUpper, hasDigit, hasSym].filter(Boolean).length;
+    let score = 0;
+    if (s.length >= 8) score++; else feedback.push('use at least 8 characters');
+    if (s.length >= 12) score++;
+    if (classes >= 3) score++; else feedback.push('mix lowercase, uppercase, digits and symbols');
+    if (classes === 4 && s.length >= 16) score++;
+    if (/(.)\1{2,}/.test(s)) { score = Math.max(0, score - 1); feedback.push('avoid repeated characters'); }
+    if (/^(123|abc|qwe|asd|password)/i.test(s)) { score = Math.max(0, score - 1); feedback.push('avoid common sequences'); }
+    const isCommon = common.has(s.toLowerCase());
+    if (isCommon) { score = 0; feedback.push('this is one of the most common passwords in the world'); }
+    score = Math.min(4, score);
+    const pool = (hasLower ? 26 : 0) + (hasUpper ? 26 : 0) + (hasDigit ? 10 : 0) + (hasSym ? 33 : 0);
+    let crack = 'instant';
+    if (pool > 0 && s.length > 0 && !isCommon) {
+      const secs = Math.pow(pool, Math.min(s.length, 64)) / 1e10; // 10B guesses/sec
+      crack = secs < 1 ? 'instant' : secs < 60 ? `${Math.round(secs)} seconds` : secs < 3600 ? `${Math.round(secs / 60)} minutes` : secs < 86400 ? `${Math.round(secs / 3600)} hours` : secs < 31557600 ? `${Math.round(secs / 86400)} days` : secs < 31557600 * 100 ? `${Math.round(secs / 31557600)} years` : `${Math.round(secs / 31557600 / 100)} centuries`;
+    }
+    return { length: s.length, score, label: ['very weak', 'weak', 'fair', 'strong', 'very strong'][score], estimated_crack_time: crack, feedback: feedback.length ? feedback : ['good password hygiene'] };
+  },
+  lightning(v) {
+    const s = (v || '').trim();
+    const dec = bech32PlainDecode(s);
+    if (!dec) return { input: v, valid: false, reason: 'fails bech32 checksum' };
+    const m = dec.hrp.match(/^ln(bc|tb|bcrt|sb)(\d+[munp]?)?$/);
+    if (!m) return { input: v, valid: false, reason: 'bad HRP: expected ln{bc|tb|bcrt|sb}[amount][multiplier]' };
+    const nets = { bc: 'mainnet', tb: 'testnet', bcrt: 'regtest', sb: 'signet' };
+    let amountMsat = null;
+    if (m[2]) {
+      const am = m[2].match(/^(\d+)([munp])?$/);
+      const mult = { m: 1e8, u: 1e5, n: 1e2, p: 0.1 };
+      amountMsat = Math.round(parseInt(am[1], 10) * (am[2] ? mult[am[2]] : 1e11));
+    }
+    const bits = dec.data; // 5-bit groups, checksum stripped
+    if (bits.length < 7 + 104) return { input: v, valid: false, reason: 'too short: missing timestamp or signature' };
+    let ts = 0;
+    for (let i = 0; i < 7; i++) ts = ts * 32 + bits[i];
+    const body = bits.slice(7, bits.length - 104); // tagged fields between timestamp and signature
+    const fieldNames = { 1: 'payment_hash', 3: 'routing_hint', 6: 'expiry', 9: 'fallback_address', 13: 'description', 19: 'payee_node', 23: 'description_hash', 24: 'min_final_cltv_expiry' };
+    const fields = [];
+    let i = 0, walkOk = true;
+    while (i < body.length) {
+      if (i + 3 > body.length) { walkOk = false; break; }
+      const type = body[i], len = body[i + 1] * 32 + body[i + 2];
+      if (i + 3 + len > body.length) { walkOk = false; break; }
+      fields.push(fieldNames[type] || `unknown_${type}`);
+      i += 3 + len;
+    }
+    if (!walkOk) return { input: v, valid: false, reason: 'malformed tagged fields' };
+    return { input: v, valid: true, network: nets[m[1]], amount_msat: amountMsat, created_at: new Date(ts * 1000).toISOString(), tagged_fields: fields, signature_present: true };
+  },
 }; // end VERIFY_FNS
 
 // ---- endpoint table: path, price tier const name, query param, summary, operationId ----
@@ -1306,6 +1395,7 @@ const VERIFY_APIS = [
   { key: 'container', path: '/verify/container', price: 'PRICE', param: 'container', op: 'verifyContainer', summary: 'Validates an ISO 6346 shipping container code check digit' },
   // Network
   { key: 'email', path: '/verify/email', price: 'VERIFY_PRICE', param: 'email', op: 'verifyEmail', summary: 'Validates email syntax and live MX records via DNS-over-HTTPS' },
+  { key: 'emailDisposable', path: '/verify/email-disposable', price: 'UTILS_PRICE', param: 'email', op: 'verifyEmailDisposable', summary: 'Checks whether an email domain is a known disposable/throwaway provider' },
   { key: 'domain', path: '/verify/domain', price: 'PRICE', param: 'domain', op: 'verifyDomain', summary: 'Returns RDAP registration status, age, expiry, and registrar for a domain' },
   { key: 'ssl', path: '/verify/ssl', price: 'PRICE', param: 'domain', op: 'verifySsl', summary: 'Fetches a domain TLS certificate and reports validity window and expiry' },
   { key: 'ipv4', path: '/verify/ipv4', price: 'UTILS_PRICE', param: 'ip', op: 'verifyIpv4', summary: 'Validates IPv4 format and classifies the address range' },
@@ -1315,6 +1405,7 @@ const VERIFY_APIS = [
   { key: 'e164', path: '/verify/e164', price: 'UTILS_PRICE', param: 'phone', op: 'verifyE164', summary: 'Validates E.164 international phone number formatting' },
   // Security
   { key: 'pwned', path: '/verify/pwned', price: 'VERIFY_PRICE', param: 'password', op: 'verifyPwned', summary: 'Checks a password against breach data via HIBP k-anonymity (never sent in full)' },
+  { key: 'passwordStrength', path: '/verify/password-strength', price: 'UTILS_PRICE', param: 'password', op: 'verifyPasswordStrength', summary: 'Scores password strength 0-4 with crack-time estimate and feedback (password never echoed back)' },
   { key: 'jwt', path: '/verify/jwt', price: 'UTILS_PRICE', param: 'token', op: 'verifyJwt', summary: 'Structurally decodes a JWT header/payload and checks expiry (no signature verify)' },
   { key: 'base64', path: '/verify/base64', price: 'UTILS_PRICE', param: 'data', op: 'verifyBase64', summary: 'Strictly validates base64/base64url encoding structure' },
   { key: 'md5hash', path: '/verify/hash/md5', price: 'UTILS_PRICE', param: 'hash', op: 'verifyMd5', summary: 'Validates a 32-char MD5 hex digest format' },
@@ -1327,6 +1418,7 @@ const VERIFY_APIS = [
   { key: 'btcAddress', path: '/verify/address/btc', price: 'UTILS_PRICE', param: 'address', op: 'verifyBtcAddress', summary: 'Validates Bitcoin P2PKH/P2SH/bech32 addresses' },
   { key: 'polkadotAddress', path: '/verify/address/polkadot', price: 'UTILS_PRICE', param: 'address', op: 'verifyPolkadotAddress', summary: 'Validates a Polkadot/Substrate ss58 address checksum' },
   { key: 'ens', path: '/verify/ens', price: 'UTILS_PRICE', param: 'name', op: 'verifyEns', summary: 'Validates an ENS name against EIP-137 normalization rules' },
+  { key: 'lightning', path: '/verify/lightning', price: 'UTILS_PRICE', param: 'invoice', op: 'verifyLightning', summary: 'Validates a BOLT11 Lightning invoice: bech32 checksum, network, amount, timestamp and tagged fields' },
   { key: 'contract', path: '/verify/contract', price: 'UTILS_PRICE', param: 'code', op: 'verifyContract', summary: 'Surface-level smart-contract linter: flags dangerous Solidity/Rust patterns (selfdestruct, delegatecall, tx.origin, unsafe blocks, missing signer checks)' },
   // Dev
   { key: 'semver', path: '/verify/semver', price: 'UTILS_PRICE', param: 'version', op: 'verifySemver', summary: 'Validates Semantic Versioning 2.0.0 format' },
@@ -1391,6 +1483,207 @@ function buildVerifyX402eps(ep) {
   return VERIFY_APIS.map(v => ep(v.path, v.summary, _priceConst()[v.price]));
 }
 
+// ================= generic paid utilities: converters, calculators, formatters (keyless, pure compute) =================
+const UTILS_FNS = {
+  textDiff(q) {
+    const a = String(q.a || '').split('\n'), b = String(q.b || '').split('\n');
+    if (a.length > 2000 || b.length > 2000) return { valid: false, reason: 'too many lines (max 2000 per text)' };
+    const n = a.length, m = b.length;
+    const hunks = [];
+    const push = (type, line) => { const l = hunks[hunks.length - 1]; if (l && l.type === type) l.lines.push(line); else hunks.push({ type, lines: [line] }); };
+    if (n * m > 2000000) {
+      // large inputs: positional diff instead of full LCS
+      const L = Math.max(n, m);
+      for (let k = 0; k < L; k++) {
+        if (k >= n) push('add', b[k]);
+        else if (k >= m) push('del', a[k]);
+        else if (a[k] !== b[k]) { push('del', a[k]); push('add', b[k]); }
+        else push('same', a[k]);
+      }
+    } else {
+      const W = m + 1, T = new Int32Array((n + 1) * W);
+      for (let i = n - 1; i >= 0; i--) for (let j = m - 1; j >= 0; j--)
+        T[i * W + j] = a[i] === b[j] ? T[(i + 1) * W + j + 1] + 1 : Math.max(T[(i + 1) * W + j], T[i * W + j + 1]);
+      let i = 0, j = 0;
+      while (i < n && j < m) {
+        if (a[i] === b[j]) { push('same', a[i]); i++; j++; }
+        else if (T[(i + 1) * W + j] >= T[i * W + j + 1]) { push('del', a[i]); i++; }
+        else { push('add', b[j]); j++; }
+      }
+      while (i < n) { push('del', a[i]); i++; }
+      while (j < m) { push('add', b[j]); j++; }
+    }
+    let added = 0, removed = 0;
+    for (const h of hunks) { if (h.type === 'add') added += h.lines.length; if (h.type === 'del') removed += h.lines.length; }
+    const trimmed = hunks.length > 500;
+    return { added_lines: added, removed_lines: removed, hunks: (trimmed ? hunks.slice(0, 500) : hunks), ...(trimmed ? { note: 'hunks truncated at 500' } : {}) };
+  },
+  qr(q) {
+    const data = String(q.data || '');
+    if (!data.trim()) return { valid: false, reason: 'missing data' };
+    if (data.length > 2000) return { valid: false, reason: 'too long (max 2000 chars)' };
+    const size = Math.min(1000, Math.max(50, parseInt(q.size || '200', 10) || 200));
+    return {
+      size,
+      qr_url: `https://api.qrserver.com/v1/create-qr-code/?size=${size}x${size}&data=${encodeURIComponent(data)}`,
+      note: 'QR image rendered by the free goqr.me API — hotlink the URL or download it.',
+    };
+  },
+  timezone(q) {
+    const at = String(q.at || '').trim();
+    if (!at) return { valid: false, reason: 'missing ?at=' };
+    let d;
+    if (/^-?\d+$/.test(at)) d = new Date(parseInt(at, 10) * (at.replace('-', '').length > 11 ? 1 : 1000));
+    else d = new Date(at);
+    if (isNaN(d.getTime())) return { valid: false, reason: 'unparseable datetime (use ISO 8601 or a unix timestamp)' };
+    const from = String(q.from || 'UTC'), to = String(q.to || '').trim();
+    if (!to) return { valid: false, reason: 'missing ?to= timezone' };
+    try {
+      const fmt = (tz) => new Intl.DateTimeFormat('en-US', { timeZone: tz, dateStyle: 'full', timeStyle: 'long' }).format(d);
+      const fromLocal = fmt(from), toLocal = fmt(to);
+      return { input: at, unix: Math.floor(d.getTime() / 1000), iso_utc: d.toISOString(), from, from_local: fromLocal, to, to_local: toLocal };
+    } catch (e) { return { valid: false, reason: 'bad timezone (use IANA names like America/New_York)' }; }
+  },
+  md2html(q) {
+    const md = String(q.md || '');
+    if (md.length > 100000) return { valid: false, reason: 'too large (max 100,000 chars)' };
+    let h = md.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const blocks = [];
+    h = h.replace(/```(\w*)\n([\s\S]*?)```/g, (mm, lang, code) => {
+      blocks.push(`<pre><code${lang ? ` class="language-${lang}"` : ''}>${code.replace(/\n$/, '')}</code></pre>`);
+      return `\u0000${blocks.length - 1}\u0000`;
+    });
+    const inline = (t) => t
+      .replace(/`([^`\n]+)`/g, '<code>$1</code>')
+      .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+      .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1<em>$2</em>')
+      .replace(/\[([^\]]+)\]\(([^)\s]+)\)/g, '<a href="$2">$1</a>');
+    h = h.split('\n').map(line => {
+      let m;
+      if ((m = line.match(/^(#{1,6})\s+(.*)$/))) return `<h${m[1].length}>${inline(m[2])}</h${m[1].length}>`;
+      if (/^---+$/.test(line.trim())) return '<hr>';
+      if (/^\d+\.\s+/.test(line)) return `\u0001OL\u0001${inline(line.replace(/^\d+\.\s+/, ''))}`;
+      if (/^[-*]\s+/.test(line)) return `\u0001UL\u0001${inline(line.replace(/^[-*]\s+/, ''))}`;
+      if (line.trim() === '') return '';
+      if (line.includes('\u0000')) return line;
+      return `<p>${inline(line)}</p>`;
+    }).join('\n');
+    h = h.replace(/((?:\u0001(?:OL|UL)\u0001[^\n]*\n?)+)/g, (mm) => {
+      const items = mm.trim().split('\n');
+      const tag = items[0].startsWith('\u0001OL') ? 'ol' : 'ul';
+      return `<${tag}>\n` + items.map(l => `<li>${l.replace(/^\u0001(?:OL|UL)\u0001/, '')}</li>`).join('\n') + `\n</${tag}>`;
+    });
+    h = h.replace(/\u0000(\d+)\u0000/g, (mm, i) => blocks[+i]);
+    return { html: h };
+  },
+  html2md(q) {
+    let t = String(q.html || '');
+    if (t.length > 200000) return { valid: false, reason: 'too large (max 200,000 chars)' };
+    t = t.replace(/<script[\s\S]*?<\/script>/gi, '').replace(/<style[\s\S]*?<\/style>/gi, '');
+    t = t.replace(/<pre[^>]*>([\s\S]*?)<\/pre>/gi, '\n```\n$1\n```\n');
+    t = t.replace(/<(strong|b)[^>]*>([\s\S]*?)<\/(strong|b)>/gi, '**$2**');
+    t = t.replace(/<(em|i)[^>]*>([\s\S]*?)<\/(em|i)>/gi, '*$2*');
+    t = t.replace(/<code[^>]*>([\s\S]*?)<\/code>/gi, '`$1`');
+    t = t.replace(/<a[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/gi, '[$2]($1)');
+    t = t.replace(/<br\s*\/?>/gi, '\n').replace(/<\/(p|div|h[1-6]|tr|table|ul|ol)>/gi, '\n')
+      .replace(/<li[^>]*>/gi, '\n- ').replace(/<h[1-6][^>]*>/gi, '\n## ');
+    t = t.replace(/<[^>]+>/g, '');
+    t = t.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
+    t = t.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+    return { markdown: t };
+  },
+  csv2json(q) {
+    const s = String(q.csv || '');
+    if (s.length > 200000) return { valid: false, reason: 'too large (max 200,000 chars)' };
+    const rows = [];
+    let row = [], cur = '', inQ = false;
+    for (let i = 0; i < s.length; i++) {
+      const c = s[i];
+      if (inQ) { if (c === '"') { if (s[i + 1] === '"') { cur += '"'; i++; } else inQ = false; } else cur += c; }
+      else if (c === '"') inQ = true;
+      else if (c === ',') { row.push(cur); cur = ''; }
+      else if (c === '\n' || c === '\r') { if (c === '\r' && s[i + 1] === '\n') i++; row.push(cur); rows.push(row); row = []; cur = ''; }
+      else cur += c;
+    }
+    if (cur !== '' || row.length) { row.push(cur); rows.push(row); }
+    const clean = rows.filter(r => r.length > 1 || (r[0] || '').trim() !== '');
+    if (clean.length < 2) return { valid: false, reason: 'need a header row plus at least one data row' };
+    if (clean.length > 5001) return { valid: false, reason: 'too many rows (max 5000)' };
+    const headers = clean[0];
+    return { rows: clean.length - 1, columns: headers, json: clean.slice(1).map(r => Object.fromEntries(headers.map((hh, ii) => [hh, r[ii] ?? null]))) };
+  },
+  json2csv(q) {
+    let arr;
+    try { arr = JSON.parse(String(q.json || '')); } catch (e) { return { valid: false, reason: 'invalid JSON' }; }
+    if (!Array.isArray(arr) || !arr.length) return { valid: false, reason: 'need a non-empty JSON array of objects' };
+    if (arr.length > 5000) return { valid: false, reason: 'too many rows (max 5000)' };
+    const keys = [...new Set(arr.flatMap(o => (o && typeof o === 'object' ? Object.keys(o) : [])))].slice(0, 100);
+    const esc = (x) => { const s2 = x == null ? '' : String(x); return /[",\n\r]/.test(s2) ? `"${s2.replace(/"/g, '""')}"` : s2; };
+    const csv = keys.map(esc).join(',') + '\n' + arr.map(o => keys.map(k => esc(o ? o[k] : '')).join(',')).join('\n');
+    return { rows: arr.length, columns: keys, csv };
+  },
+};
+
+const UTILS_APIS = [
+  { key: 'textDiff', path: '/utils/text-diff', params: [{ n: 'a', req: true, d: 'First text' }, { n: 'b', req: true, d: 'Second text' }], op: 'utilsTextDiff', summary: 'Line-based diff of two texts with added/removed counts and hunks' },
+  { key: 'qr', path: '/utils/qr', params: [{ n: 'data', req: true, d: 'Text or URL to encode' }, { n: 'size', req: false, d: 'Image size in px (default 200, max 1000)' }], op: 'utilsQr', summary: 'Builds a QR-code image URL for the given text (free provider, properly encoded)' },
+  { key: 'timezone', path: '/utils/timezone', params: [{ n: 'at', req: true, d: 'Datetime (ISO 8601) or unix timestamp' }, { n: 'from', req: false, d: 'Source IANA timezone (default UTC)' }, { n: 'to', req: true, d: 'Target IANA timezone' }], op: 'utilsTimezone', summary: 'Converts a datetime between IANA timezones' },
+  { key: 'md2html', path: '/utils/md2html', params: [{ n: 'md', req: true, d: 'Markdown text' }], op: 'utilsMd2Html', summary: 'Converts Markdown to HTML' },
+  { key: 'html2md', path: '/utils/html2md', params: [{ n: 'html', req: true, d: 'HTML text' }], op: 'utilsHtml2Md', summary: 'Converts HTML to Markdown-ish plain text' },
+  { key: 'csv2json', path: '/utils/csv2json', params: [{ n: 'csv', req: true, d: 'CSV text (first row = headers)' }], op: 'utilsCsv2Json', summary: 'Converts CSV to a JSON array of objects' },
+  { key: 'json2csv', path: '/utils/json2csv', params: [{ n: 'json', req: true, d: 'JSON array of objects' }], op: 'utilsJson2Csv', summary: 'Converts a JSON array of objects to CSV' },
+];
+
+function buildUtilsMw() {
+  const mw = {};
+  for (const u of UTILS_APIS) {
+    mw[`GET ${u.path}`] = {
+      accepts: acceptsFor(UTILS_PRICE),
+      description: `Returns a JSON object: ${u.summary.charAt(0).toLowerCase() + u.summary.slice(1)}`,
+      extensions: bazaarExt(u.params.map(p => ({ n: p.n, req: p.req, d: p.d }))),
+    };
+  }
+  return mw;
+}
+function registerUtilsRoutes(app) {
+  for (const u of UTILS_APIS) {
+    app.get(u.path, async (req, res) => {
+      for (const p of u.params) {
+        if (p.req && !(req.query[p.n] || '').toString().trim())
+          return res.status(400).json({ error: `missing ?${p.n}= parameter` });
+      }
+      try {
+        console.log(`PAID ${u.path} ${new Date().toISOString()}`); // buyer analytics: which endpoint sold
+        res.json(await UTILS_FNS[u.key](req.query));
+      } catch (e) {
+        res.status(502).json({ error: `${u.path} failed: ` + String(e.message || e) });
+      }
+    });
+  }
+}
+function buildUtilsOapiPaths() {
+  const paths = {};
+  for (const u of UTILS_APIS) {
+    paths[u.path] = {
+      get: {
+        operationId: u.op,
+        summary: u.summary,
+        tags: ['Utilities'],
+        'x-payment-info': { price: { mode: 'fixed', currency: 'USD', amount: '0.001000' }, protocols: [{ x402: {} }] },
+        parameters: u.params.map(p => ({ name: p.n, in: 'query', required: p.req, description: p.d, schema: { type: 'string' } })),
+        responses: {
+          200: { description: 'Result', content: { 'application/json': { schema: { type: 'object' } } } },
+          402: { description: 'Payment Required: $0.001 USDC via x402' },
+        },
+      },
+    };
+  }
+  return paths;
+}
+function buildUtilsX402eps(ep) {
+  return UTILS_APIS.map(u => ep(u.path, `${u.summary}, returns a JSON object`, UTILS_PRICE));
+}
+
 const app = express();
 app.set('trust proxy', 1); // Render reverse proxy: keeps resource URLs https:// for CDP Bazaar
 
@@ -1399,6 +1692,7 @@ app.use(paymentMiddleware(
   {
     ...masterMw,
     ...buildVerifyMw(),
+    ...buildUtilsMw(),
     'GET /spread': {
       accepts: acceptsFor(PRICE),
       description: 'Returns a JSON object with live SOL prices from the top 5 centralized exchanges and top 5 Solana DEXs, plus the widest bid-ask spread detected',
@@ -2402,6 +2696,7 @@ app.get('/verify/dea', (req, res) => {
 });
 
 registerVerifyRoutes(app);
+registerUtilsRoutes(app);
 
 // Discovery: OpenAPI 3.1 document — required by x402scan for listing
 // Discovery: OpenAPI 3.1 document — required by x402scan for listing
@@ -2410,15 +2705,16 @@ registerMasterRoutes(app);
 app.get('/openapi.json', (req, res) => res.json({
   openapi: '3.1.0',
   info: {
-    title: 'x402 master data API — 127 endpoints',
+    title: 'x402 master data API — 137 endpoints',
     version: '2.0.0',
-    description: '127 pay-per-call APIs: AI text/image generation ($0.01), Polymarket odds, crypto prices, DeFi yields, FX rates, weather, IP/geo, FBI wanted, SEC tickers, clinical trials, 250M academic papers, Stack Overflow, meme-coin launchpads (pump.fun, Clanker, Four.meme, SunPump), tokenized stocks, Solana top 100, Base DEX spreads, and 40+ more. $0.005/call standard. USDC on Base and Solana via x402.',
+    description: '137 pay-per-call APIs: AI text/image generation ($0.01), Polymarket odds, crypto prices, DeFi yields, FX rates, weather, IP/geo, FBI wanted, SEC tickers, clinical trials, 250M academic papers, Stack Overflow, meme-coin launchpads (pump.fun, Clanker, Four.meme, SunPump), tokenized stocks, Solana top 100, Base DEX spreads, and 40+ more. $0.005/call standard. USDC on Base and Solana via x402.',
     contact: { email: 'ctiernan21@gmail.com' },
   },
   servers: [{ url: API_URL }],
   paths: {
     ...buildMasterOapiPaths(),
     ...buildVerifyOapiPaths(),
+    ...buildUtilsOapiPaths(),
     '/utils/base64': {
       get: {
         operationId: 'base64Util',
@@ -3069,14 +3365,15 @@ app.get('/.well-known/x402.json', (req, res) => {
   ];
   const ep = (path, description, price) => ({ path, method: 'GET', description, price, accepts: acceptsForDoc(price) });
   res.json({
-    name: 'x402 master data API — 127 endpoints',
-    description: '127 pay-per-call APIs: AI text/image generation ($0.01), Polymarket odds, crypto prices, DeFi yields, FX rates, weather, IP/geo, FBI wanted, SEC tickers, clinical trials, 250M academic papers, Stack Overflow, meme-coin launchpads (pump.fun, Clanker, Four.meme, SunPump), tokenized stocks, Solana top 100, Base DEX spreads, and 40+ more. $0.005/call standard. USDC on Base and Solana via x402.',
+    name: 'x402 master data API — 137 endpoints',
+    description: '137 pay-per-call APIs: AI text/image generation ($0.01), Polymarket odds, crypto prices, DeFi yields, FX rates, weather, IP/geo, FBI wanted, SEC tickers, clinical trials, 250M academic papers, Stack Overflow, meme-coin launchpads (pump.fun, Clanker, Four.meme, SunPump), tokenized stocks, Solana top 100, Base DEX spreads, and 40+ more. $0.005/call standard. USDC on Base and Solana via x402.',
     url: API_URL,
     x402Version: 2,
     networks: [...Object.values(EVM_NETWORKS), SOL_NETWORK],
     endpoints: [
       ...buildMasterX402eps(ep),
       ...buildVerifyX402eps(ep),
+      ...buildUtilsX402eps(ep),
       ep('/utils/base64', 'Encodes text to base64 or decodes base64 to text, returns a JSON object with the result string', UTILS_PRICE),
       ep('/utils/hash', 'Computes a cryptographic hash of input text, returns a JSON object with the hex digest string', UTILS_PRICE),
       ep('/utils/uuid', 'Generates random UUID v4 values, returns a JSON array of UUID strings', UTILS_PRICE),
