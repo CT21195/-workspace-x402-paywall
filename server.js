@@ -1,5 +1,7 @@
 import express from 'express';
 import { randomUUID, createHash } from 'node:crypto';
+import { isIPv4 as netIsIPv4, isIPv6 as netIsIPv6 } from 'node:net';
+import tls from 'node:tls';
 import { paymentMiddleware, x402ResourceServer } from '@x402/express';
 import { bazaarResourceServerExtension, declareDiscoveryExtension } from '@x402/extensions';
 import { JSDOM } from 'jsdom';
@@ -560,6 +562,810 @@ function buildMasterX402eps(ep) {
   return MASTER_APIS.map(a => ep(a.path, a.summary, a.price));
 }
 // ================= /MASTER API =================
+// Verification endpoint library — 48 validators (pure computation + free public sources, no API keys).
+// Written standalone for unit testing; inlined into server.js for deployment.
+
+// ---------- generic helpers ----------
+function luhnOk(digits) {
+  if (!/^\d+$/.test(digits) || digits.length < 2) return false;
+  let sum = 0, dbl = false;
+  for (let i = digits.length - 1; i >= 0; i--) {
+    let d = +digits[i];
+    if (dbl) { d *= 2; if (d > 9) d -= 9; }
+    sum += d; dbl = !dbl;
+  }
+  return sum % 10 === 0;
+}
+// ISO 7064 mod-97 (IBAN, LEI)
+function mod97Ok(str) {
+  const rearr = (str.slice(4) + str.slice(0, 4)).toUpperCase();
+  let rem = 0;
+  for (const ch of rearr) {
+    const code = ch >= 'A' && ch <= 'Z' ? ch.charCodeAt(0) - 55 : +ch;
+    if (!Number.isInteger(code) || code < 0 || code > 35) return false;
+    rem = (rem * (code > 9 ? 100 : 10) + code) % 97;
+  }
+  return rem === 1;
+}
+const B58_ALPHABET = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+function base58Decode(s) {
+  if (!s || /[^1-9A-HJ-NP-Za-km-z]/.test(s)) return null;
+  let num = 0n;
+  for (const ch of s) num = num * 58n + BigInt(B58_ALPHABET.indexOf(ch));
+  let bytes = new Uint8Array(0);
+  if (num !== 0n) {
+    let hex = num.toString(16);
+    if (hex.length % 2) hex = '0' + hex;
+    bytes = Uint8Array.from(Buffer.from(hex, 'hex'));
+  }
+  let leading = 0;
+  for (const ch of s) { if (ch === '1') leading++; else break; }
+  const out = new Uint8Array(leading + bytes.length);
+  out.set(bytes, leading);
+  return out;
+}
+// ---------- keccak256 (pure JS, for EIP-55) ----------
+const KECCAK_RC = [0x0000000000000001n,0x0000000000008082n,0x800000000000808an,0x8000000080008000n,0x000000000000808bn,0x0000000080000001n,0x8000000080008081n,0x8000000000008009n,0x000000000000008an,0x0000000000000088n,0x0000000080008009n,0x000000008000000an,0x000000008000808bn,0x800000000000008bn,0x8000000000008089n,0x8000000000008003n,0x8000000000008002n,0x8000000000000080n,0x000000000000800an,0x800000008000000an,0x8000000080008081n,0x8000000000008080n,0x0000000080000001n,0x8000000080008008n];
+const KECCAK_RHO = [0,1,62,28,27, 36,44,6,55,20, 3,10,43,25,39, 41,45,15,21,8, 18,2,61,56,14];
+const MASK64 = (1n << 64n) - 1n;
+function rotl64(x, n) { n %= 64; return n === 0 ? x & MASK64 : ((x << BigInt(n)) | (x >> BigInt(64 - n))) & MASK64; }
+function keccakF1600(s) {
+  for (let r = 0; r < 24; r++) {
+    const C = [], D = [];
+    for (let x = 0; x < 5; x++) C[x] = s[x] ^ s[x+5] ^ s[x+10] ^ s[x+15] ^ s[x+20];
+    for (let x = 0; x < 5; x++) D[x] = C[(x+4)%5] ^ rotl64(C[(x+1)%5], 1);
+    for (let x = 0; x < 5; x++) for (let y = 0; y < 5; y++) s[x+5*y] ^= D[x];
+    const B = new Array(25);
+    for (let x = 0; x < 5; x++) for (let y = 0; y < 5; y++)
+      B[y + 5*((2*x + 3*y) % 5)] = rotl64(s[x + 5*y], KECCAK_RHO[x + 5*y]);
+    for (let x = 0; x < 5; x++) for (let y = 0; y < 5; y++)
+      s[x+5*y] = B[x+5*y] ^ ((~B[(x+1)%5 + 5*y] & MASK64) & B[(x+2)%5 + 5*y]);
+    s[0] ^= KECCAK_RC[r];
+  }
+}
+function keccak256Hex(inputBytes) {
+  const rate = 136, suffix = 0x01;
+  const blocks = [];
+  let buf = Array.from(inputBytes);
+  buf.push(suffix);
+  while (buf.length % rate !== 0) buf.push(0x00);
+  buf[buf.length - 1] |= 0x80;
+  const s = new Array(25).fill(0n);
+  for (let off = 0; off < buf.length; off += rate) {
+    for (let i = 0; i < rate / 8; i++) {
+      let lane = 0n;
+      for (let b = 0; b < 8; b++) lane |= BigInt(buf[off + i*8 + b]) << BigInt(8*b);
+      s[i] ^= lane;
+    }
+    keccakF1600(s);
+  }
+  let hex = '';
+  for (let i = 0; i < 4; i++) hex += (s[i] & MASK64).toString(16).padStart(16, '0').match(/../g).reverse().join('');
+  return hex;
+}
+// ---------- bech32 ----------
+const BECH32_ALPH = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+function bech32Polymod(vals) {
+  const GEN = [0x3b6a57b2, 0x26508e6d, 0x1ea119fa, 0x3d4233dd, 0x2a1462b3];
+  let chk = 1;
+  for (const v of vals) {
+    const b = chk >> 25;
+    chk = ((chk & 0x1ffffff) << 5) ^ v;
+    for (let i = 0; i < 5; i++) if ((b >> i) & 1) chk ^= GEN[i];
+  }
+  return chk;
+}
+function bech32Decode(addr) {
+  const a = addr.toLowerCase();
+  if (addr !== addr.toLowerCase() && addr !== addr.toUpperCase()) return null;
+  const pos = a.lastIndexOf('1');
+  if (pos < 1 || pos + 7 > a.length || a.length > 90) return null;
+  const hrp = a.slice(0, pos), data = a.slice(pos + 1);
+  const vals = [];
+  for (const ch of data) { const v = BECH32_ALPH.indexOf(ch); if (v < 0) return null; vals.push(v); }
+  const hrpVals = [...hrp].map(c => c.charCodeAt(0) >> 5).concat([0], [...hrp].map(c => c.charCodeAt(0) & 31));
+  const pm = bech32Polymod(hrpVals.concat(vals));
+  const isBech32 = pm === 1, isBech32m = pm === 0x2bc830a3;
+  if (!isBech32 && !isBech32m) return null;
+  const ver = vals[0];
+  if (ver > 16) return null;
+  if (ver === 0 && !(isBech32 && (vals.length === 39 || vals.length === 59))) return null;
+  if (ver !== 0 && !isBech32m) return null;
+  // convert 5-bit to 8-bit
+  let acc = 0, bits = 0; const prog = [];
+  for (let i = 1; i < vals.length - 6; i++) {
+    acc = (acc << 5) | vals[i]; bits += 5;
+    if (bits >= 8) { bits -= 8; prog.push((acc >> bits) & 0xff); }
+  }
+  if (bits >= 5 || ((acc << (8 - bits)) & 0xff) !== 0) return null;
+  return { hrp, version: ver, program: prog, encoding: isBech32 ? 'bech32' : 'bech32m' };
+}
+async function fetchText(url, ms = 9000) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  try {
+    const r = await fetch(url, { signal: ctrl.signal, headers: { 'User-Agent': 'x402-verify/1.0' } });
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    return await r.text();
+  } finally { clearTimeout(t); }
+}
+async function fetchJsonSimple(url, ms = 9000) {
+  return JSON.parse(await fetchText(url, ms));
+}
+
+// ================= validators (each returns a JSON-able object) =================
+const VERIFY_FNS = {
+  // ---- Financial ----
+  iban(v) {
+    const s = v.replace(/[\s-]/g, '').toUpperCase();
+    if (!/^[A-Z]{2}\d{2}[A-Z0-9]{11,30}$/.test(s)) return { input: v, valid: false, reason: 'must be 2-letter country + 2 check digits + up to 30 alphanumerics' };
+    const lens = { AL:28, AD:24, AT:20, AZ:28, BE:16, BH:22, BR:29, BG:22, CR:22, HR:21, CY:28, CZ:24, DK:18, DO:28, EG:29, ES:24, FI:18, FR:27, GB:22, GE:22, DE:22, GR:27, GL:18, GT:28, HU:28, IS:26, IE:22, IL:23, IT:27, JO:30, KZ:20, LV:21, LB:28, LI:21, LT:20, LU:20, MK:19, MT:31, MR:27, MU:30, MC:27, MD:24, ME:22, NL:18, NO:15, PK:24, PS:29, PL:28, PT:25, QA:29, RO:24, SM:27, SA:24, RS:22, SK:24, SI:19, SE:24, CH:21, TN:24, TR:26, AE:23 };
+    const cc = s.slice(0, 2);
+    if (lens[cc] && s.length !== lens[cc]) return { input: v, valid: false, reason: `wrong length for ${cc}: expected ${lens[cc]}` };
+    const ok = mod97Ok(s);
+    return { input: v, valid: ok, country: cc, check_digits: s.slice(2, 4), ...(ok ? {} : { reason: 'fails ISO 13616 mod-97 checksum' }) };
+  },
+  routing(v) {
+    const s = v.replace(/[\s-]/g, '');
+    if (!/^\d{9}$/.test(s)) return { input: v, valid: false, reason: 'must be 9 digits' };
+    const d = [...s].map(Number);
+    const sum = 3*(d[0]+d[3]+d[6]) + 7*(d[1]+d[4]+d[7]) + (d[2]+d[5]+d[8]);
+    const ok = sum % 10 === 0;
+    return { input: v, valid: ok, ...(ok ? {} : { reason: 'fails ABA checksum' }) };
+  },
+  card(v) {
+    const s = v.replace(/[\s-]/g, '');
+    if (!/^\d{12,19}$/.test(s)) return { input: v, valid: false, reason: 'must be 12-19 digits' };
+    const brands = [
+      [/^4/, 'Visa'], [/^5[1-5]/, 'Mastercard'], [/^2[2-7]/, 'Mastercard'],
+      [/^3[47]/, 'American Express'], [/^6(?:011|5)/, 'Discover'], [/^35/, 'JCB'], [/^62/, 'UnionPay'],
+    ];
+    const brand = (brands.find(([re]) => re.test(s)) || [])[1] || 'Unknown';
+    const ok = luhnOk(s);
+    return { input: v, valid: ok, brand, disclaimer: 'Checksum only — does not confirm the card is real, active, or funded.' };
+  },
+  swift(v) {
+    const s = v.trim().toUpperCase();
+    const m = s.match(/^([A-Z]{4})([A-Z]{2})([A-Z0-9]{2})([A-Z0-9]{3})?$/);
+    if (!m) return { input: v, valid: false, reason: 'must be 8 or 11 chars: 4-letter bank + 2-letter country + 2-char location + optional 3-char branch' };
+    return { input: v, valid: true, bank_code: m[1], country: m[2], location: m[3], branch: m[4] || 'XXX (head office)' };
+  },
+  isin(v) {
+    const s = v.replace(/[\s-]/g, '').toUpperCase();
+    if (!/^[A-Z]{2}[A-Z0-9]{9}\d$/.test(s)) return { input: v, valid: false, reason: 'must be 2 letters + 9 alphanumerics + 1 check digit' };
+    const digits = [...s].map(ch => /[A-Z]/.test(ch) ? String(ch.charCodeAt(0) - 55) : ch).join('');
+    const ok = luhnOk(digits);
+    return { input: v, valid: ok, country: s.slice(0, 2), ...(ok ? {} : { reason: 'fails ISIN checksum' }) };
+  },
+  cusip(v) {
+    const s = v.replace(/[\s-]/g, '').toUpperCase();
+    if (!/^[0-9A-Z*@#]{9}$/.test(s)) return { input: v, valid: false, reason: 'must be 9 chars (0-9, A-Z, *, @, #)' };
+    const val = ch => /\d/.test(ch) ? +ch : ch === '*' ? 36 : ch === '@' ? 37 : ch === '#' ? 38 : ch.charCodeAt(0) - 55;
+    let sum = 0;
+    for (let i = 0; i < 8; i++) {
+      let n = val(s[i]);
+      if (i % 2 === 1) { n *= 2; sum += Math.floor(n / 10) + (n % 10); }
+      else sum += n;
+    }
+    const ok = (sum + val(s[8])) % 10 === 0;
+    return { input: v, valid: ok, ...(ok ? {} : { reason: 'fails CUSIP checksum' }) };
+  },
+  sedol(v) {
+    const s = v.replace(/[\s-]/g, '').toUpperCase();
+    if (!/^[0-9A-Z]{7}$/.test(s)) return { input: v, valid: false, reason: 'must be 7 alphanumerics' };
+    const w = [1, 3, 1, 7, 3, 9];
+    let sum = 0;
+    for (let i = 0; i < 6; i++) {
+      const ch = s[i];
+      const n = /\d/.test(ch) ? +ch : ch.charCodeAt(0) - 55;
+      sum += n * w[i];
+    }
+    const ok = (10 - (sum % 10)) % 10 === +s[6];
+    return { input: v, valid: ok, ...(ok ? {} : { reason: 'fails SEDOL checksum' }) };
+  },
+  upi(v) {
+    const s = v.trim();
+    const ok = /^[\w.\-]{2,256}@[a-zA-Z]{2,64}$/.test(s);
+    return { input: v, valid: ok, ...(ok ? { handle: s.split('@')[0], provider: s.split('@')[1] } : { reason: 'must look like handle@bank' }) };
+  },
+  // ---- Identity / government / business ----
+  vat(v) {
+    const s = v.replace(/[\s\-.]/g, '').toUpperCase();
+    const cc = s.slice(0, 2);
+    const rest = s.slice(2);
+    const rules = {
+      DE: /^\d{9}$/, FR: /^[0-9A-Z]{2}\d{9}$/, IT: /^\d{11}$/, ES: /^[0-9A-Z]\d{7}[0-9A-Z]$/,
+      NL: /^\d{9}B\d{2}$/, BE: /^\d{10}$/, AT: /^U\d{8}$/, PL: /^\d{10}$/, PT: /^\d{9}$/,
+      IE: /^[0-9A-Z]\d{7}[0-9A-Z]$/, SE: /^\d{12}$/, DK: /^\d{8}$/, FI: /^\d{8}$/,
+      GR: /^\d{9}$/, CZ: /^\d{8,10}$/, HU: /^\d{8}$/, RO: /^\d{2,10}$/, BG: /^\d{9,10}$/,
+      HR: /^\d{11}$/, SK: /^\d{10}$/, SI: /^\d{8}$/, GB: /^(\d{9}|\d{12}|GD\d{3}|HA\d{3})$/,
+    };
+    if (!rules[cc]) return { input: v, valid: false, reason: 'unknown country prefix (expected EU/GB VAT like DE123456789)' };
+    const ok = rules[cc].test(rest);
+    return { input: v, valid: ok, country: cc, disclaimer: 'Format check only — not confirmed against the VIES registry.' };
+  },
+  ein(v) {
+    const s = v.trim();
+    const m = s.match(/^(\d{2})-?(\d{7})$/);
+    const validPrefixes = ['01','02','03','04','05','06','10','11','12','13','14','15','16','20','21','22','23','24','25','26','27','30','32','33','34','35','36','37','38','39','40','41','42','43','44','45','46','47','48','50','51','52','53','54','55','56','57','58','59','60','61','62','63','64','65','66','68','71','72','73','74','75','76','77','80','81','82','83','84','85','86','87','88','90','91','92','93','94','95','98','99'];
+    const ok = !!m && validPrefixes.includes(m[1]);
+    return { input: v, valid: ok, ...(ok ? { formatted: `${m[1]}-${m[2]}` } : { reason: 'must be 2-digit IRS prefix + 7 digits (e.g. 12-3456789)' }) };
+  },
+  lei(v) {
+    const s = v.replace(/[\s-]/g, '').toUpperCase();
+    if (!/^[A-Z0-9]{20}$/.test(s)) return { input: v, valid: false, reason: 'must be 20 alphanumerics' };
+    const ok = mod97Ok(s);
+    return { input: v, valid: ok, ...(ok ? {} : { reason: 'fails ISO 17442 mod-97 checksum' }) };
+  },
+  ssn(v) {
+    const s = v.trim();
+    const m = s.match(/^(\d{3})-?(\d{2})-?(\d{4})$/);
+    if (!m) return { input: v, valid: false, reason: 'must look like 123-45-6789' };
+    const [area, group, serial] = [m[1], m[2], m[3]];
+    const bad = area === '000' || area === '666' || +area >= 900 || group === '00' || serial === '0000';
+    return { input: v, valid: !bad, ...(bad ? { reason: 'uses an impossible SSA area/group/serial combination' } : {}), disclaimer: 'Format check only — reveals nothing about a real person.' };
+  },
+  mrz(v) {
+    const lines = v.trim().toUpperCase().split(/[\r\n]+/).map(l => l.trim());
+    if (lines.length !== 2 || lines.some(l => l.length !== 44 || /[^A-Z0-9<]/.test(l)))
+      return { input: v, valid: false, reason: 'must be exactly 2 lines of 44 chars (A-Z, 0-9, <)' };
+    const val = ch => ch === '<' ? 0 : /\d/.test(ch) ? +ch : ch.charCodeAt(0) - 55;
+    const cd = s => { const w = [7, 3, 1]; let t = 0; for (let i = 0; i < s.length; i++) t += val(s[i]) * w[i % 3]; return t % 10; };
+    const [l1, l2] = lines;
+    // TD3 (passport): line2 = docnum(0-8)+cd(9), nationality(10-12), dob(13-18)+cd(19),
+    // sex(20), expiry(21-26)+cd(27), personal(28-41)+cd(42), composite cd(43)
+    const checks = [
+      ['document_number', l2.slice(0, 9), +l2[9]],
+      ['date_of_birth', l2.slice(13, 19), +l2[19]],
+      ['expiry_date', l2.slice(21, 27), +l2[27]],
+      ['personal_number', l2.slice(28, 42), +l2[42]],
+    ];
+    const bad = checks.filter(([n, s2, c]) => cd(s2) !== c).map(([n]) => n);
+    const composite = cd(l2.slice(0, 10) + l2.slice(13, 20) + l2.slice(21, 28) + l2.slice(28, 43));
+    const ok = bad.length === 0 && composite === +l2[43];
+    return {
+      input: v, valid: ok,
+      document_type: l1[0], issuing_country: l1.slice(2, 5).replace(/</g, ''),
+      document_number: l2.slice(0, 9).replace(/</g, ''),
+      surname_given: l1.slice(5, 44).split('<<').map(p => p.replace(/</g, ' ').trim()),
+      nationality: l2.slice(10, 13).replace(/</g, ''), sex: l2[20],
+      ...(ok ? {} : { failed_checks: bad.concat(composite !== +l2[43] ? ['composite'] : []) }),
+    };
+  },
+  nino(v) {
+    const s = v.replace(/[\s-]/g, '').toUpperCase();
+    if (!/^[A-CEGHJ-PR-TW-Z]{2}\d{6}[A-D]$/.test(s)) return { input: v, valid: false, reason: 'must be 2 letters + 6 digits + 1 letter (A-D)' };
+    const bad = ['BG', 'GB', 'KN', 'NK', 'NT', 'TN', 'ZZ'].includes(s.slice(0, 2));
+    return { input: v, valid: !bad, ...(bad ? { reason: 'prefix is never issued' } : {}) };
+  },
+  sin(v) {
+    const s = v.replace(/[\s-]/g, '');
+    if (!/^\d{9}$/.test(s)) return { input: v, valid: false, reason: 'must be 9 digits' };
+    const ok = luhnOk(s);
+    return { input: v, valid: ok, ...(ok ? {} : { reason: 'fails SIN Luhn checksum' }) };
+  },
+  // ---- Retail, logistics, automotive ----
+  upc(v) {
+    const s = v.replace(/[\s-]/g, '');
+    const check = d => { let t = 0; for (let i = 0; i < d.length - 1; i++) t += +d[i] * (i % 2 === 0 ? 3 : 1); return (10 - (t % 10)) % 10 === +d[d.length - 1]; };
+    if (/^\d{12}$/.test(s)) {
+      const ok = check(s);
+      return { input: v, valid: ok, format: 'UPC-A', ...(ok ? {} : { reason: 'fails UPC-A checksum' }) };
+    }
+    if (/^\d{8}$/.test(s)) {
+      // expand UPC-E to UPC-A
+      const last = s[6], mfr = s.slice(1, 6);
+      let upc;
+      if (last <= '2') upc = '0' + s[1] + s[2] + last + '0000' + s.slice(3, 6);
+      else if (last === '3') upc = '0' + s.slice(1, 4) + '00000' + s.slice(4, 6);
+      else if (last === '4') upc = '0' + s.slice(1, 5) + '00000' + s[5];
+      else upc = '0' + s.slice(1, 6) + '0000' + last;
+      upc += s[7];
+      const ok = check(upc);
+      return { input: v, valid: ok, format: 'UPC-E', expanded: upc, ...(ok ? {} : { reason: 'fails UPC-E checksum' }) };
+    }
+    return { input: v, valid: false, reason: 'must be 12 digits (UPC-A) or 8 digits (UPC-E)' };
+  },
+  ean(v) {
+    const s = v.replace(/[\s-]/g, '');
+    const check = d => { let t = 0; for (let i = 0; i < d.length - 1; i++) t += +d[i] * (i % 2 === 0 ? 1 : 3); return (10 - (t % 10)) % 10 === +d[d.length - 1]; };
+    if (/^\d{13}$/.test(s)) {
+      const ok = check(s);
+      return { input: v, valid: ok, format: 'EAN-13', ...(ok ? {} : { reason: 'fails EAN-13 checksum' }) };
+    }
+    if (/^\d{8}$/.test(s)) {
+      const ok = check(s);
+      return { input: v, valid: ok, format: 'EAN-8', ...(ok ? {} : { reason: 'fails EAN-8 checksum' }) };
+    }
+    return { input: v, valid: false, reason: 'must be 13 digits (EAN-13) or 8 digits (EAN-8)' };
+  },
+  isbn(v) {
+    const s = v.replace(/[\s-]/g, '').toUpperCase();
+    if (/^\d{13}$/.test(s)) {
+      let t = 0;
+      for (let i = 0; i < 12; i++) t += +s[i] * (i % 2 === 0 ? 1 : 3);
+      const ok = (10 - (t % 10)) % 10 === +s[12];
+      return { input: v, valid: ok, format: 'ISBN-13', ...(ok ? {} : { reason: 'fails ISBN-13 checksum' }) };
+    }
+    if (/^\d{9}[\dX]$/.test(s)) {
+      let t = 0;
+      for (let i = 0; i < 9; i++) t += +s[i] * (10 - i);
+      t += s[9] === 'X' ? 10 : +s[9];
+      const ok = t % 11 === 0;
+      return { input: v, valid: ok, format: 'ISBN-10', ...(ok ? {} : { reason: 'fails ISBN-10 checksum' }) };
+    }
+    return { input: v, valid: false, reason: 'must be 13 digits (ISBN-13) or 9 digits + digit/X (ISBN-10)' };
+  },
+  vin(v) {
+    const s = v.trim().toUpperCase();
+    if (!/^[A-HJ-NPR-Z0-9]{17}$/.test(s)) return { input: v, valid: false, reason: 'must be 17 chars (no I, O, Q)' };
+    const tv = { A:1,B:2,C:3,D:4,E:5,F:6,G:7,H:8,J:1,K:2,L:3,M:4,N:5,P:7,R:9,S:2,T:3,U:4,V:5,W:6,X:7,Y:8,Z:9 };
+    const w = [8,7,6,5,4,3,2,10,0,9,8,7,6,5,4,3,2];
+    let t = 0;
+    for (let i = 0; i < 17; i++) { const ch = s[i]; t += (/\d/.test(ch) ? +ch : tv[ch]) * w[i]; }
+    const cd = t % 11;
+    const ok = (cd === 10 ? 'X' : String(cd)) === s[8];
+    const years = { A:'1980/2010', B:'1981/2011', C:'1982/2012', D:'1983/2013', E:'1984/2014', F:'1985/2015', G:'1986/2016', H:'1987/2017', J:'1988/2018', K:'1989/2019', L:'1990/2020', M:'1991/2021', N:'1992/2022', P:'1993/2023', R:'1994/2024', S:'1995/2025', T:'1996/2026', V:'1997/2027', W:'1998/2028', X:'1999/2029', Y:'2000/2030', 1:'2001/2031', 2:'2002/2032', 3:'2003/2033', 4:'2004/2034', 5:'2005/2035', 6:'2006/2036', 7:'2007/2037', 8:'2008/2038', 9:'2009/2039' };
+    return { input: v, valid: ok, wmi: s.slice(0, 3), model_year: years[s[9]] || 'unknown', plant: s[10], serial: s.slice(11), ...(ok ? {} : { reason: 'fails VIN check digit' }) };
+  },
+  usps(v) {
+    const s = v.replace(/[\s-]/g, '');
+    if (!/^\d{20}$|^\d{22}$|^\d{26}$|^\d{30}$|^\d{34}$/.test(s)) return { input: v, valid: false, reason: 'must be 20, 22, 26, 30, or 34 digits' };
+    let t = 0;
+    for (let i = 0; i < s.length - 1; i++) t += +s[i] * (i % 2 === 0 ? 3 : 1);
+    const ok = (10 - (t % 10)) % 10 === +s[s.length - 1];
+    return { input: v, valid: ok, length: s.length, ...(ok ? {} : { reason: 'fails USPS mod-10 checksum' }) };
+  },
+  ups(v) {
+    const s = v.replace(/[\s-]/g, '').toUpperCase();
+    if (!/^1Z[0-9A-Z]{16}$/.test(s)) return { input: v, valid: false, reason: 'must be 1Z + 16 alphanumerics' };
+    const chars = s.slice(2); // 15 data chars + check digit
+    let total = 0;
+    for (let i = 0; i < 15; i++) {
+      const c = chars[i];
+      // letters map to single digits: A->2, B->3, ... H->9, I->0, J->1, ... (wraps at 10)
+      const d = c >= '0' && c <= '9' ? +c : ((c.charCodeAt(0) - 65) % 10 + 2) % 10;
+      total += i % 2 === 0 ? d : d * 2;
+    }
+    const ok = (10 - (total % 10)) % 10 === +chars[15];
+    return { input: v, valid: ok, ...(ok ? {} : { reason: 'fails UPS check digit' }) };
+  },
+  fedex(v) {
+    const s = v.replace(/[\s-]/g, '');
+    if (!/^\d{12}$|^\d{15}$|^\d{20}$|^\d{22}$/.test(s)) return { input: v, valid: false, reason: 'must be 12, 15, 20, or 22 digits' };
+    // FedEx does not publish its check-digit algorithm; structural validation only.
+    return { input: v, valid: true, length: s.length, check: 'structural only — FedEx check algorithm is not public' };
+  },
+  imei(v) {
+    const s = v.replace(/[\s-]/g, '');
+    if (!/^\d{15}$/.test(s)) return { input: v, valid: false, reason: 'must be 15 digits' };
+    const ok = luhnOk(s);
+    return { input: v, valid: ok, tac: s.slice(0, 8), serial: s.slice(8, 14), ...(ok ? {} : { reason: 'fails IMEI Luhn checksum' }) };
+  },
+  meid(v) {
+    const s = v.replace(/[\s-:]/g, '').toUpperCase();
+    if (!/^[0-9A-F]{14}([0-9A-F])?$/.test(s)) return { input: v, valid: false, reason: 'must be 14 hex chars, optional 15th check digit' };
+    if (s.length === 14) return { input: v, valid: true, check_digit: 'not provided' };
+    let t = 0;
+    for (let i = 0; i < 14; i++) {
+      let n = parseInt(s[i], 16);
+      if (i % 2 === 1) { n *= 2; t += Math.floor(n / 16) + (n % 16); }
+      else t += n;
+    }
+    const ok = (16 - (t % 16)) % 16 === parseInt(s[14], 16);
+    return { input: v, valid: ok, ...(ok ? {} : { reason: 'fails MEID check digit' }) };
+  },
+  container(v) {
+    const s = v.replace(/[\s-]/g, '').toUpperCase();
+    if (!/^[A-Z]{4}\d{7}$/.test(s)) return { input: v, valid: false, reason: 'must be 4 letters + 7 digits (ISO 6346)' };
+    // ISO 6346 letter values: A=10..Z=38 skipping 11, 22, 33
+    const letterVal = ch => { const base = ch.charCodeAt(0) - 55; return base + (base >= 11 ? 1 : 0) + (base >= 21 ? 1 : 0) + (base >= 31 ? 1 : 0); };
+    let t = 0;
+    for (let i = 0; i < 10; i++) {
+      const ch = s[i];
+      const n = i < 4 ? letterVal(ch) : +ch;
+      t += n * Math.pow(2, i);
+    }
+    let cd = t % 11;
+    if (cd === 10) cd = 0;
+    const ok = cd === +s[10];
+    return { input: v, valid: ok, owner: s.slice(0, 3), category: s[3], serial: s.slice(4, 10), ...(ok ? {} : { reason: 'fails ISO 6346 check digit' }) };
+  },
+  // ---- Network & web infrastructure ----
+  async email(v) {
+    const s = v.trim();
+    if (!/^[^\s@]{1,64}@[^\s@]{1,253}\.[^\s@]{2,}$/.test(s)) return { input: v, valid: false, reason: 'fails basic email syntax' };
+    const domain = s.split('@').pop().toLowerCase();
+    let mx = [];
+    try {
+      const d = await fetchJsonSimple(`https://dns.google/resolve?name=${encodeURIComponent(domain)}&type=MX`);
+      mx = (d.Answer || []).filter(a => a.type === 15).map(a => a.data.split(' ').slice(1).join(' '));
+    } catch (e) { return { input: v, valid: false, reason: 'MX lookup failed: ' + (e.message || e) }; }
+    return { input: v, valid: mx.length > 0, domain, has_mx: mx.length > 0, mx_hosts: mx.slice(0, 5), ...(mx.length ? {} : { reason: 'domain has no MX records — cannot receive mail' }) };
+  },
+  async domain(v) {
+    const s = v.trim().toLowerCase().replace(/^https?:\/\//, '').split('/')[0];
+    if (!/^(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))*\.[a-z]{2,}$/.test(s))
+      return { input: v, valid: false, reason: 'not a valid domain format' };
+    let d;
+    try { d = await fetchJsonSimple(`https://rdap.org/domain/${encodeURIComponent(s)}`); }
+    catch (e) { return { input: v, valid: false, registered: false, reason: 'no RDAP record — likely unregistered' }; }
+    const ev = n => (d.events || []).find(e2 => e2.eventAction === n)?.eventDate || null;
+    const registrar = (d.entities || []).find(e2 => (e2.roles || []).includes('registrar'));
+    const created = ev('registration'), expires = ev('expiration');
+    const ageDays = created ? Math.floor((Date.now() - new Date(created)) / 86400000) : null;
+    return { input: v, valid: true, registered: true, domain: d.ldhName || s, status: d.status || [], created, expires, age_days: ageDays, registrar: registrar?.vcardArray?.[1]?.find(x => x[0] === 'fn')?.[3] || null };
+  },
+  async ssl(v) {
+    const host = v.trim().toLowerCase().replace(/^https?:\/\//, '').split('/')[0].split(':')[0];
+    if (!host) return { input: v, valid: false, reason: 'missing domain' };
+    const cert = await new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error('TLS timeout')), 9000);
+      const sock = tls.connect({ host, port: 443, servername: host, rejectUnauthorized: false }, () => {
+        clearTimeout(t);
+        const c = sock.getPeerCertificate(true);
+        sock.end();
+        c ? resolve(c) : reject(new Error('no certificate presented'));
+      });
+      sock.on('error', e => { clearTimeout(t); reject(e); });
+    }).catch(e => { throw new Error('TLS fetch failed: ' + (e.message || e)); });
+    const validTo = new Date(cert.valid_to), validFrom = new Date(cert.valid_from);
+    const now = new Date();
+    const ok = now >= validFrom && now <= validTo;
+    return {
+      input: v, valid: ok, host,
+      subject: cert.subject?.CN || null, issuer: cert.issuer?.O || cert.issuer?.CN || null,
+      valid_from: cert.valid_from, valid_to: cert.valid_to,
+      days_until_expiry: Math.floor((validTo - now) / 86400000),
+      ...(ok ? {} : { reason: 'certificate is expired or not yet valid' }),
+    };
+  },
+  ipv4(v) {
+    const s = v.trim();
+    if (!netIsIPv4(s)) return { input: v, valid: false, reason: 'not valid IPv4' };
+    const o = s.split('.').map(Number);
+    const cls =
+      o[0] === 10 ? 'private (RFC1918)' : o[0] === 172 && o[1] >= 16 && o[1] <= 31 ? 'private (RFC1918)' :
+      o[0] === 192 && o[1] === 168 ? 'private (RFC1918)' : o[0] === 127 ? 'loopback' :
+      o[0] >= 224 && o[0] <= 239 ? 'multicast' : o[0] === 0 ? 'this network' :
+      s === '255.255.255.255' ? 'broadcast' : o[0] === 169 && o[1] === 254 ? 'link-local' : 'public/unicast';
+    return { input: v, valid: true, classification: cls };
+  },
+  ipv6(v) {
+    const s = v.trim();
+    if (!netIsIPv6(s)) return { input: v, valid: false, reason: 'not valid IPv6' };
+    const low = s.toLowerCase();
+    const cls = low === '::1' ? 'loopback' : low === '::' ? 'unspecified' :
+      low.startsWith('fe80:') ? 'link-local' : low.startsWith('fc') || low.startsWith('fd') ? 'unique-local' :
+      low.startsWith('ff') ? 'multicast' : 'global-unicast';
+    return { input: v, valid: true, classification: cls };
+  },
+  mac(v) {
+    const s = v.trim().toUpperCase();
+    const m = s.match(/^([0-9A-F]{2})[:-]([0-9A-F]{2})[:-]([0-9A-F]{2})[:-]([0-9A-F]{2})[:-]([0-9A-F]{2})[:-]([0-9A-F]{2})$/) ||
+              s.match(/^([0-9A-F]{4})\.([0-9A-F]{4})\.([0-9A-F]{4})$/) ||
+              s.match(/^([0-9A-F]{12})$/);
+    if (!m) return { input: v, valid: false, reason: 'must be XX:XX:XX:XX:XX:XX, XXXX.XXXX.XXXX, or 12 hex chars' };
+    const hex = m.slice(1).join('').replace(/[^0-9A-F]/g, '');
+    const first = parseInt(hex.slice(0, 2), 16);
+    return {
+      input: v, valid: true, normalized: hex.match(/../g).join(':'),
+      oui: hex.slice(0, 6).match(/../g).join(':'),
+      multicast: !!(first & 1), locally_administered: !!((first >> 1) & 1),
+    };
+  },
+  asn(v) {
+    const s = v.trim().toUpperCase();
+    const m = s.match(/^(?:AS)?(\d+)$/);
+    if (!m) return { input: v, valid: false, reason: 'must look like AS12345 or 12345' };
+    const n = +m[1];
+    if (n < 1 || n > 4294967295) return { input: v, valid: false, reason: 'out of range (1-4294967295)' };
+    const scope = n <= 65535 ? '16-bit' : '32-bit';
+    const priv = (n >= 64512 && n <= 65534) || (n >= 4200000000 && n <= 4294967294);
+    return { input: v, valid: true, asn: 'AS' + n, scope, reserved: priv ? 'private-use' : 'public' };
+  },
+  e164(v) {
+    const s = v.replace(/[\s\-.()]/g, '');
+    const ok = /^\+[1-9]\d{7,14}$/.test(s);
+    return { input: v, valid: ok, ...(ok ? { normalized: s, country_code: s.match(/^\+(\d{1,3})/)[1] } : { reason: 'must be + followed by 8-15 digits (e.g. +16315551234)' }) };
+  },
+  // ---- Security & cryptography ----
+  async pwned(v) {
+    if (!v) return { input: '(empty)', valid: false, reason: 'password required' };
+    const sha1 = createHash('sha1').update(v, 'utf8').digest('hex').toUpperCase();
+    const prefix = sha1.slice(0, 5), suffix = sha1.slice(5);
+    const body = await fetchText(`https://api.pwnedpasswords.com/range/${prefix}`).catch(e => { throw new Error('HIBP lookup failed: ' + (e.message || e)); });
+    const line = body.split('\n').find(l => l.split(':')[0].trim() === suffix);
+    const count = line ? parseInt(line.split(':')[1], 10) : 0;
+    return { valid: true, breached: count > 0, breach_count: count, method: 'k-anonymity (only first 5 chars of SHA-1 left this server)', ...(count > 0 ? { warning: 'This password appears in known breaches — do not use it.' } : { note: 'Not found in known breaches.' }) };
+  },
+  jwt(v) {
+    const s = v.trim();
+    const parts = s.split('.');
+    if (parts.length !== 3) return { input: '(redacted)', valid: false, reason: 'must have 3 dot-separated parts' };
+    const dec = p => JSON.parse(Buffer.from(p.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8'));
+    let header, payload;
+    try { header = dec(parts[0]); payload = dec(parts[1]); }
+    catch { return { input: '(redacted)', valid: false, reason: 'header/payload are not valid base64url JSON' }; }
+    const now = Math.floor(Date.now() / 1000);
+    const exp = typeof payload.exp === 'number' ? payload.exp : null;
+    return {
+      valid: true, algorithm: header.alg || null, type: header.typ || null,
+      subject: payload.sub ?? null, issuer: payload.iss ?? null,
+      issued_at: payload.iat ? new Date(payload.iat * 1000).toISOString() : null,
+      expires_at: exp ? new Date(exp * 1000).toISOString() : null,
+      expired: exp ? now > exp : null,
+      disclaimer: 'Structural decode only — signature NOT verified.',
+    };
+  },
+  base64(v) {
+    const s = v.trim();
+    const std = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(s) && s.length % 4 === 0 && s.length > 0;
+    const url = /^(?:[A-Za-z0-9\-_]{4})*(?:[A-Za-z0-9\-_]{2}==|[A-Za-z0-9\-_]{3}=?|[A-Za-z0-9\-_]{4})?$/.test(s) && s.length > 0;
+    return { input: v.slice(0, 64) + (v.length > 64 ? '…' : ''), valid: std || url, variant: std ? 'standard' : url ? 'base64url' : null, ...(std || url ? {} : { reason: 'fails strict base64/base64url structure' }) };
+  },
+  md5hash(v) {
+    const s = v.trim().toLowerCase();
+    const ok = /^[0-9a-f]{32}$/.test(s);
+    return { input: v, valid: ok, algorithm: 'MD5', ...(ok ? {} : { reason: 'must be 32 hex chars' }) };
+  },
+  sha256hash(v) {
+    const s = v.trim().toLowerCase();
+    const ok = /^[0-9a-f]{64}$/.test(s);
+    return { input: v, valid: ok, algorithm: 'SHA-256', ...(ok ? {} : { reason: 'must be 64 hex chars' }) };
+  },
+  uuid(v) {
+    const s = v.trim().toLowerCase();
+    const m = s.match(/^([0-9a-f]{8})-([0-9a-f]{4})-([0-9a-f]{4})-([0-9a-f]{4})-([0-9a-f]{12})$/);
+    if (!m) return { input: v, valid: false, reason: 'must be 8-4-4-4-12 hex' };
+    return { input: v, valid: true, version: m[3][0], variant: /^8|^9|^a|^b/.test(m[4]) ? 'RFC 4122' : 'reserved' };
+  },
+  ulid(v) {
+    const s = v.trim().toUpperCase();
+    if (!/^[0-9A-HJKMNP-TV-Z]{26}$/.test(s)) return { input: v, valid: false, reason: 'must be 26 chars of Crockford base32 (no I,L,O,U)' };
+    const C = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+    let ms = 0;
+    for (let i = 0; i < 10; i++) ms = ms * 32 + C.indexOf(s[i]);
+    return { input: v, valid: true, timestamp_ms: ms, timestamp: new Date(ms).toISOString() };
+  },
+  // ---- Blockchain & web3 ----
+  evmAddress(v) {
+    const s = v.trim();
+    if (!/^0x[0-9a-fA-F]{40}$/.test(s)) return { input: v, valid: false, reason: 'must be 0x + 40 hex chars' };
+    const hex = s.slice(2).toLowerCase();
+    const hash = keccak256Hex(Buffer.from(hex, 'ascii'));
+    let checksummed = '0x';
+    for (let i = 0; i < 40; i++) checksummed += parseInt(hash[i], 16) >= 8 ? hex[i].toUpperCase() : hex[i];
+    const eip55 = s.slice(2) === checksummed.slice(2);
+    const allLower = s.slice(2) === hex, allUpper = s.slice(2) === hex.toUpperCase();
+    return { input: v, valid: true, eip55_checksum_valid: eip55 || allLower || allUpper, checksummed, note: allLower || allUpper ? 'all-lower/all-upper accepted (no checksum encoded)' : eip55 ? 'valid EIP-55 checksum' : 'INVALID EIP-55 checksum — possible typo' };
+  },
+  solanaAddress(v) {
+    const s = v.trim();
+    const bytes = base58Decode(s);
+    const ok = !!bytes && bytes.length === 32;
+    return { input: v, valid: ok, ...(ok ? { encoding: 'base58', bytes: 32 } : { reason: 'must be base58 decoding to exactly 32 bytes' }) };
+  },
+  btcAddress(v) {
+    const s = v.trim();
+    // Base58Check (P2PKH/P2SH)
+    const raw = base58Decode(s);
+    if (raw && (raw.length === 25)) {
+      const ver = raw[0];
+      const chk = createHash('sha256').update(createHash('sha256').update(raw.slice(0, 21)).digest()).digest().slice(0, 4);
+      if (Buffer.from(chk).equals(Buffer.from(raw.slice(21)))) {
+        const type = ver === 0x00 ? 'P2PKH' : ver === 0x05 ? 'P2SH' : ver === 0x6f ? 'P2PKH (testnet)' : ver === 0xc4 ? 'P2SH (testnet)' : 'unknown version ' + ver;
+        return { input: v, valid: true, format: 'base58check', type };
+      }
+      return { input: v, valid: false, reason: 'fails base58check checksum' };
+    }
+    // Bech32/Bech32m (segwit)
+    const bc = bech32Decode(s);
+    if (bc && (bc.hrp === 'bc' || bc.hrp === 'tb' || bc.hrp === 'bcrt')) {
+      const progLen = bc.program.length;
+      const type = bc.version === 0 && progLen === 20 ? 'P2WPKH' : bc.version === 0 && progLen === 32 ? 'P2WSH' : `segwit v${bc.version}`;
+      return { input: v, valid: true, format: bc.encoding, type, network: bc.hrp === 'bc' ? 'mainnet' : 'testnet/regtest' };
+    }
+    return { input: v, valid: false, reason: 'not a valid base58check or bech32 address' };
+  },
+  polkadotAddress(v) {
+    const s = v.trim();
+    const raw = base58Decode(s);
+    if (!raw) return { input: v, valid: false, reason: 'not valid base58' };
+    // SS58: prefix (1-2 bytes) + 32 bytes + checksum (1-2 bytes, blake2b("SS58PRE"+data))
+    let prefix, body, csum;
+    if (raw.length === 35) { prefix = raw[0]; if (prefix >= 64) return { input: v, valid: false, reason: 'bad ss58 prefix' }; body = raw.slice(1, 33); csum = raw.slice(33); }
+    else if (raw.length === 36) { prefix = ((raw[0] & 0x3f) << 2) | (raw[1] >> 6); body = raw.slice(2, 34); csum = raw.slice(34); }
+    else return { input: v, valid: false, reason: 'wrong length for ss58 (expected 35 or 36 bytes)' };
+    const pre = Buffer.concat([Buffer.from('SS58PRE'), Buffer.from(raw.slice(0, raw.length - csum.length))]);
+    const hash = createHash('blake2b512').update(pre).digest();
+    const ok = hash[0] === csum[0] && (csum.length === 1 || hash[1] === csum[1]);
+    const nets = { 0: 'Polkadot', 2: 'Kusama', 42: 'generic Substrate' };
+    return { input: v, valid: ok, ...(ok ? { prefix, network: nets[prefix] || `ss58 prefix ${prefix}` } : { reason: 'fails ss58 checksum' }) };
+  },
+  ens(v) {
+    const s = v.trim().toLowerCase();
+    if (s.length > 255 || s.length === 0) return { input: v, valid: false, reason: 'empty or over 255 chars' };
+    const labels = s.split('.');
+    if (labels.length < 2) return { input: v, valid: false, reason: 'must have at least one dot (e.g. name.eth)' };
+    for (const l of labels) {
+      if (!l || l.length > 63 || !/^[a-z0-9-]+$/.test(l) || l.startsWith('-') || l.endsWith('-') || l.includes('--'))
+        return { input: v, valid: false, reason: `bad label "${l}" (EIP-137: a-z, 0-9, hyphen, no leading/trailing/double hyphen)` };
+    }
+    return { input: v, valid: true, labels, tld: labels[labels.length - 1], is_eth: labels[labels.length - 1] === 'eth' };
+  },
+  // ---- Development & data formats ----
+  semver(v) {
+    const s = v.trim().replace(/^v/i, '');
+    const m = s.match(/^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\.(?:0|[1-9]\d*|\d*[a-zA-Z-][0-9a-zA-Z-]*))*))?(?:\+([0-9a-zA-Z-]+(?:\.[0-9a-zA-Z-]+)*))?$/);
+    if (!m) return { input: v, valid: false, reason: 'must match SemVer 2.0.0 (e.g. 1.2.3, 2.0.0-beta.1+build)' };
+    return { input: v, valid: true, major: +m[1], minor: +m[2], patch: +m[3], prerelease: m[4] || null, build: m[5] || null };
+  },
+  cron(v) {
+    const s = v.trim();
+    const parts = s.split(/\s+/);
+    if (parts.length !== 5 && parts.length !== 6) return { input: v, valid: false, reason: 'must have 5 fields (min hour dom month dow) or 6 (with seconds)' };
+    const names = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12, sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+    const fields = parts.length === 6 ? parts.slice(1) : parts; // drop seconds for next-run calc
+    const ranges = [[0, 59], [0, 23], [1, 31], [1, 12], [0, 7]];
+    const parseField = (f, [lo, hi]) => {
+      let ff = f.toLowerCase();
+      for (const [n, num] of Object.entries(names)) ff = ff.replace(new RegExp(`\\b${n}\\b`, 'g'), num);
+      if (ff === '*') return { ok: true, all: true };
+      const vals = new Set();
+      for (const seg of ff.split(',')) {
+        let m = seg.match(/^\*\/(\d+)$/);
+        let a, b, step;
+        if (m) { a = lo; b = hi; step = +m[1]; }
+        else {
+          m = seg.match(/^(\d+)(?:-(\d+))?(?:\/(\d+))?$/);
+          if (!m) return { ok: false };
+          [a, b, step] = [+m[1], m[2] !== undefined ? +m[2] : +m[1], m[3] !== undefined ? +m[3] : 1];
+        }
+        if (a < lo || b > hi || a > b || step < 1) return { ok: false };
+        for (let x = a; x <= b; x += step) vals.add(x === 7 && hi === 7 ? 0 : x);
+      }
+      return { ok: true, vals };
+    };
+    const parsed = fields.map((f, i) => parseField(f, ranges[i]));
+    const badIdx = parsed.findIndex(p => !p.ok);
+    if (badIdx >= 0) return { input: v, valid: false, reason: `field ${badIdx + 1} ("${fields[badIdx]}") out of range or malformed` };
+    // next run: step minute-by-minute up to 366 days
+    const [mi, hr, dom, mon, dow] = parsed;
+    const match = d => (!mi.vals || mi.vals.has(d.getMinutes())) && (!hr.vals || hr.vals.has(d.getHours())) &&
+      (!mon.vals || mon.vals.has(d.getMonth() + 1)) &&
+      ((!dom.vals || dom.vals.has(d.getDate())) || (!dow.vals || dow.vals.has(d.getDay())));
+    const t = new Date(); t.setSeconds(0, 0); t.setMinutes(t.getMinutes() + 1);
+    let next = null;
+    for (let i = 0; i < 366 * 1440; i++) { if (match(t)) { next = new Date(t); break; } t.setMinutes(t.getMinutes() + 1); }
+    return { input: v, valid: true, fields: parts.length, next_run: next ? next.toISOString() : null };
+  },
+  json(v) {
+    try {
+      const o = JSON.parse(v);
+      const t = Array.isArray(o) ? 'array' : o === null ? 'null' : typeof o;
+      return { valid: true, type: t, ...(t === 'array' ? { length: o.length } : t === 'object' ? { keys: Object.keys(o).length } : {}) };
+    } catch (e) {
+      const m = String(e.message).match(/position (\d+)/);
+      return { valid: false, reason: 'invalid JSON: ' + e.message, ...(m ? { error_at: +m[1], context: v.slice(Math.max(0, +m[1] - 20), +m[1] + 20) } : {}) };
+    }
+  },
+}; // end VERIFY_FNS
+
+// ---- endpoint table: path, price tier const name, query param, summary, operationId ----
+const VERIFY_APIS = [
+  // Financial
+  { key: 'iban', path: '/verify/iban', price: 'PRICE', param: 'iban', op: 'verifyIban', summary: 'Validates an IBAN checksum (ISO 13616 mod-97) and parses country/bank codes' },
+  { key: 'routing', path: '/verify/routing', price: 'PRICE', param: 'routing', op: 'verifyRouting', summary: 'Validates a US bank routing number (ABA) checksum' },
+  { key: 'card', path: '/verify/card', price: 'PRICE', param: 'number', op: 'verifyCard', summary: 'Validates a card number Luhn checksum and detects the brand (format check only)' },
+  { key: 'swift', path: '/verify/swift', price: 'PRICE', param: 'swift', op: 'verifySwift', summary: 'Validates a SWIFT/BIC code structure and parses bank/country/branch' },
+  { key: 'isin', path: '/verify/isin', price: 'PRICE', param: 'isin', op: 'verifyIsin', summary: 'Validates an ISIN securities identifier checksum' },
+  { key: 'cusip', path: '/verify/cusip', price: 'PRICE', param: 'cusip', op: 'verifyCusip', summary: 'Validates a CUSIP securities identifier checksum' },
+  { key: 'sedol', path: '/verify/sedol', price: 'PRICE', param: 'sedol', op: 'verifySedol', summary: 'Validates a SEDOL (UK securities) checksum' },
+  { key: 'upi', path: '/verify/upi', price: 'PRICE', param: 'upi', op: 'verifyUpi', summary: 'Validates a UPI ID format (India, handle@bank)' },
+  // Identity
+  { key: 'vat', path: '/verify/vat', price: 'PRICE', param: 'vat', op: 'verifyVat', summary: 'Validates an EU/GB VAT number format per country rules' },
+  { key: 'ein', path: '/verify/ein', price: 'PRICE', param: 'ein', op: 'verifyEin', summary: 'Validates a US EIN format and IRS prefix' },
+  { key: 'lei', path: '/verify/lei', price: 'PRICE', param: 'lei', op: 'verifyLei', summary: 'Validates a Legal Entity Identifier (ISO 17442 mod-97)' },
+  { key: 'ssn', path: '/verify/ssn', price: 'PRICE', param: 'ssn', op: 'verifySsn', summary: 'Validates a US SSN format against impossible SSA combinations (format only)' },
+  { key: 'mrz', path: '/verify/passport/mrz', price: 'PRICE', param: 'mrz', op: 'verifyMrz', summary: 'Validates passport MRZ check digits (ICAO 9303, 2x44 chars)' },
+  { key: 'nino', path: '/verify/nino', price: 'PRICE', param: 'nino', op: 'verifyNino', summary: 'Validates a UK National Insurance number format and prefix rules' },
+  { key: 'sin', path: '/verify/sin', price: 'PRICE', param: 'sin', op: 'verifySin', summary: 'Validates a Canadian SIN Luhn checksum' },
+  // Retail / logistics / auto
+  { key: 'upc', path: '/verify/upc', price: 'PRICE', param: 'upc', op: 'verifyUpc', summary: 'Validates UPC-A/UPC-E barcode checksums' },
+  { key: 'ean', path: '/verify/ean', price: 'PRICE', param: 'ean', op: 'verifyEan', summary: 'Validates EAN-13/EAN-8 barcode checksums' },
+  { key: 'isbn', path: '/verify/isbn', price: 'PRICE', param: 'isbn', op: 'verifyIsbn', summary: 'Validates ISBN-10/ISBN-13 checksums' },
+  { key: 'vin', path: '/verify/vin', price: 'PRICE', param: 'vin', op: 'verifyVin', summary: 'Validates a VIN check digit and decodes year/plant' },
+  { key: 'usps', path: '/verify/usps', price: 'PRICE', param: 'tracking', op: 'verifyUsps', summary: 'Validates a USPS tracking number checksum' },
+  { key: 'ups', path: '/verify/ups', price: 'PRICE', param: 'tracking', op: 'verifyUps', summary: 'Validates a UPS tracking number (1Z) check digit' },
+  { key: 'fedex', path: '/verify/fedex', price: 'PRICE', param: 'tracking', op: 'verifyFedex', summary: 'Validates FedEx tracking number structure (12/15/20/22 digits; checksum not published by FedEx)' },
+  { key: 'imei', path: '/verify/imei', price: 'PRICE', param: 'imei', op: 'verifyImei', summary: 'Validates a device IMEI Luhn checksum' },
+  { key: 'meid', path: '/verify/meid', price: 'PRICE', param: 'meid', op: 'verifyMeid', summary: 'Validates a device MEID hex format and check digit' },
+  { key: 'container', path: '/verify/container', price: 'PRICE', param: 'container', op: 'verifyContainer', summary: 'Validates an ISO 6346 shipping container code check digit' },
+  // Network
+  { key: 'email', path: '/verify/email', price: 'VERIFY_PRICE', param: 'email', op: 'verifyEmail', summary: 'Validates email syntax and live MX records via DNS-over-HTTPS' },
+  { key: 'domain', path: '/verify/domain', price: 'PRICE', param: 'domain', op: 'verifyDomain', summary: 'Returns RDAP registration status, age, expiry, and registrar for a domain' },
+  { key: 'ssl', path: '/verify/ssl', price: 'PRICE', param: 'domain', op: 'verifySsl', summary: 'Fetches a domain TLS certificate and reports validity window and expiry' },
+  { key: 'ipv4', path: '/verify/ipv4', price: 'UTILS_PRICE', param: 'ip', op: 'verifyIpv4', summary: 'Validates IPv4 format and classifies the address range' },
+  { key: 'ipv6', path: '/verify/ipv6', price: 'UTILS_PRICE', param: 'ip', op: 'verifyIpv6', summary: 'Validates IPv6 format and classifies the address range' },
+  { key: 'mac', path: '/verify/mac', price: 'UTILS_PRICE', param: 'mac', op: 'verifyMac', summary: 'Validates a MAC address and parses OUI/multicast bits' },
+  { key: 'asn', path: '/verify/asn', price: 'UTILS_PRICE', param: 'asn', op: 'verifyAsn', summary: 'Validates an Autonomous System Number and reports scope' },
+  { key: 'e164', path: '/verify/e164', price: 'UTILS_PRICE', param: 'phone', op: 'verifyE164', summary: 'Validates E.164 international phone number formatting' },
+  // Security
+  { key: 'pwned', path: '/verify/pwned', price: 'VERIFY_PRICE', param: 'password', op: 'verifyPwned', summary: 'Checks a password against breach data via HIBP k-anonymity (never sent in full)' },
+  { key: 'jwt', path: '/verify/jwt', price: 'UTILS_PRICE', param: 'token', op: 'verifyJwt', summary: 'Structurally decodes a JWT header/payload and checks expiry (no signature verify)' },
+  { key: 'base64', path: '/verify/base64', price: 'UTILS_PRICE', param: 'data', op: 'verifyBase64', summary: 'Strictly validates base64/base64url encoding structure' },
+  { key: 'md5hash', path: '/verify/hash/md5', price: 'UTILS_PRICE', param: 'hash', op: 'verifyMd5', summary: 'Validates a 32-char MD5 hex digest format' },
+  { key: 'sha256hash', path: '/verify/hash/sha256', price: 'UTILS_PRICE', param: 'hash', op: 'verifySha256', summary: 'Validates a 64-char SHA-256 hex digest format' },
+  { key: 'uuid', path: '/verify/uuid', price: 'UTILS_PRICE', param: 'uuid', op: 'verifyUuid', summary: 'Validates UUID structure and detects the version' },
+  { key: 'ulid', path: '/verify/ulid', price: 'UTILS_PRICE', param: 'ulid', op: 'verifyUlid', summary: 'Validates ULID format and extracts its timestamp' },
+  // Blockchain
+  { key: 'evmAddress', path: '/verify/address/evm', price: 'UTILS_PRICE', param: 'address', op: 'verifyEvmAddress', summary: 'Validates an EVM address and its EIP-55 checksum' },
+  { key: 'solanaAddress', path: '/verify/address/solana', price: 'UTILS_PRICE', param: 'address', op: 'verifySolanaAddress', summary: 'Validates a Solana address (base58, 32 bytes)' },
+  { key: 'btcAddress', path: '/verify/address/btc', price: 'UTILS_PRICE', param: 'address', op: 'verifyBtcAddress', summary: 'Validates Bitcoin P2PKH/P2SH/bech32 addresses' },
+  { key: 'polkadotAddress', path: '/verify/address/polkadot', price: 'UTILS_PRICE', param: 'address', op: 'verifyPolkadotAddress', summary: 'Validates a Polkadot/Substrate ss58 address checksum' },
+  { key: 'ens', path: '/verify/ens', price: 'UTILS_PRICE', param: 'name', op: 'verifyEns', summary: 'Validates an ENS name against EIP-137 normalization rules' },
+  // Dev
+  { key: 'semver', path: '/verify/semver', price: 'UTILS_PRICE', param: 'version', op: 'verifySemver', summary: 'Validates Semantic Versioning 2.0.0 format' },
+  { key: 'cron', path: '/verify/cron', price: 'UTILS_PRICE', param: 'cron', op: 'verifyCron', summary: 'Validates a cron expression and computes the next run time' },
+  { key: 'json', path: '/verify/json', price: 'UTILS_PRICE', param: 'json', op: 'verifyJson', summary: 'Strictly validates JSON and pinpoints syntax errors' },
+];
+// price tier -> { amount6, label }
+const VERIFY_TIERS = {
+  PRICE: { amount: '0.005000', label: '$0.005' },
+  CHAIN_PRICE: { amount: '0.003000', label: '$0.003' },
+  UTILS_PRICE: { amount: '0.001000', label: '$0.001' },
+  VERIFY_PRICE: { amount: '0.010000', label: '$0.01' },
+  AI_PRICE: { amount: '0.010000', label: '$0.01' },
+};
+const _priceConst = () => ({ PRICE, CHAIN_PRICE, UTILS_PRICE, VERIFY_PRICE, AI_PRICE });
+function buildVerifyMw() {
+  const mw = {};
+  for (const v of VERIFY_APIS) {
+    mw[`GET ${v.path}`] = {
+      accepts: acceptsFor(_priceConst()[v.price]),
+      description: `Returns a JSON object: ${v.summary.charAt(0).toLowerCase() + v.summary.slice(1)}`,
+      extensions: bazaarExt([{ n: v.param, req: true, d: `Value to verify` }]),
+    };
+  }
+  return mw;
+}
+function registerVerifyRoutes(app) {
+  for (const v of VERIFY_APIS) {
+    app.get(v.path, async (req, res) => {
+      const val = (req.query[v.param] || '').toString();
+      if (!val.trim()) return res.status(400).json({ error: `missing ?${v.param}= parameter` });
+      try {
+        res.json(await VERIFY_FNS[v.key](val));
+      } catch (e) {
+        res.status(502).json({ error: `${v.path} failed: ${String(e.message || e)}` });
+      }
+    });
+  }
+}
+function buildVerifyOapiPaths() {
+  const paths = {};
+  for (const v of VERIFY_APIS) {
+    const t = VERIFY_TIERS[v.price];
+    paths[v.path] = {
+      get: {
+        operationId: v.op,
+        summary: v.summary,
+        tags: ['Verification'],
+        'x-payment-info': { price: { mode: 'fixed', currency: 'USD', amount: t.amount }, protocols: [{ x402: {} }] },
+        parameters: [{ name: v.param, in: 'query', required: true, schema: { type: 'string' } }],
+        responses: {
+          200: { description: 'Verification result', content: { 'application/json': { schema: { type: 'object' } } } },
+          402: { description: `Payment Required: ${t.label} USDC via x402` },
+        },
+      },
+    };
+  }
+  return paths;
+}
+function buildVerifyX402eps(ep) {
+  return VERIFY_APIS.map(v => ep(v.path, v.summary, _priceConst()[v.price]));
+}
 
 const app = express();
 app.set('trust proxy', 1); // Render reverse proxy: keeps resource URLs https:// for CDP Bazaar
@@ -568,6 +1374,7 @@ const masterMw = buildMasterMw();
 app.use(paymentMiddleware(
   {
     ...masterMw,
+    ...buildVerifyMw(),
     'GET /spread': {
       accepts: acceptsFor(PRICE),
       description: 'Returns a JSON object with live SOL prices from the top 5 centralized exchanges and top 5 Solana DEXs, plus the widest bid-ask spread detected',
@@ -792,6 +1599,7 @@ app.get('/', (req, res) => res.json({
     spread: `${PRICE} USDC per request`,
     verify_npi: `${VERIFY_PRICE} USDC per request`,
     verify_dea: `${PRICE} USDC per request`,
+    verify_suite: `${PRICE} USDC per request ($0.01 for email/npi/pwned, $0.001 for utils)`,
   },
   endpoints: [
     'GET /utils/base64?op=encode&text=hello',
@@ -810,6 +1618,12 @@ app.get('/', (req, res) => res.json({
     'GET /search/github?q=x402&type=repositories',
     'GET /search/npm?q=express',
     'GET /search/wikipedia?q=black+holes',
+    'GET /verify/iban?iban=GB29NWBK60161331926819',
+    'GET /verify/vin?vin=1HGCM82633A004352',
+    'GET /verify/email?email=test@example.com',
+    'GET /verify/address/evm?address=0xD7CDd563e8F6A249B076A702b7e2C233CCF3481d',
+    'GET /verify/upc?upc=036000291452',
+    'GET /verify/jwt?token=<jwt>',
   ],
 }));
 
@@ -1563,6 +2377,8 @@ app.get('/verify/dea', (req, res) => {
   });
 });
 
+registerVerifyRoutes(app);
+
 // Discovery: OpenAPI 3.1 document — required by x402scan for listing
 // Discovery: OpenAPI 3.1 document — required by x402scan for listing
 registerMasterRoutes(app);
@@ -1570,14 +2386,15 @@ registerMasterRoutes(app);
 app.get('/openapi.json', (req, res) => res.json({
   openapi: '3.1.0',
   info: {
-    title: 'x402 master data API — 78 endpoints',
+    title: 'x402 master data API — 126 endpoints',
     version: '2.0.0',
-    description: '78 pay-per-call APIs: AI text/image generation ($0.01), Polymarket odds, crypto prices, DeFi yields, FX rates, weather, IP/geo, FBI wanted, SEC tickers, clinical trials, 250M academic papers, Stack Overflow, meme-coin launchpads (pump.fun, Clanker, Four.meme, SunPump), tokenized stocks, Solana top 100, Base DEX spreads, and 40+ more. $0.005/call standard. USDC on Base and Solana via x402.',
+    description: '126 pay-per-call APIs: AI text/image generation ($0.01), Polymarket odds, crypto prices, DeFi yields, FX rates, weather, IP/geo, FBI wanted, SEC tickers, clinical trials, 250M academic papers, Stack Overflow, meme-coin launchpads (pump.fun, Clanker, Four.meme, SunPump), tokenized stocks, Solana top 100, Base DEX spreads, and 40+ more. $0.005/call standard. USDC on Base and Solana via x402.',
     contact: { email: 'ctiernan21@gmail.com' },
   },
   servers: [{ url: API_URL }],
   paths: {
     ...buildMasterOapiPaths(),
+    ...buildVerifyOapiPaths(),
     '/utils/base64': {
       get: {
         operationId: 'base64Util',
@@ -2228,13 +3045,14 @@ app.get('/.well-known/x402.json', (req, res) => {
   ];
   const ep = (path, description, price) => ({ path, method: 'GET', description, price, accepts: acceptsForDoc(price) });
   res.json({
-    name: 'x402 master data API — 78 endpoints',
-    description: '78 pay-per-call APIs: AI text/image generation ($0.01), Polymarket odds, crypto prices, DeFi yields, FX rates, weather, IP/geo, FBI wanted, SEC tickers, clinical trials, 250M academic papers, Stack Overflow, meme-coin launchpads (pump.fun, Clanker, Four.meme, SunPump), tokenized stocks, Solana top 100, Base DEX spreads, and 40+ more. $0.005/call standard. USDC on Base and Solana via x402.',
+    name: 'x402 master data API — 126 endpoints',
+    description: '126 pay-per-call APIs: AI text/image generation ($0.01), Polymarket odds, crypto prices, DeFi yields, FX rates, weather, IP/geo, FBI wanted, SEC tickers, clinical trials, 250M academic papers, Stack Overflow, meme-coin launchpads (pump.fun, Clanker, Four.meme, SunPump), tokenized stocks, Solana top 100, Base DEX spreads, and 40+ more. $0.005/call standard. USDC on Base and Solana via x402.',
     url: API_URL,
     x402Version: 2,
     networks: [...Object.values(EVM_NETWORKS), SOL_NETWORK],
     endpoints: [
       ...buildMasterX402eps(ep),
+      ...buildVerifyX402eps(ep),
       ep('/utils/base64', 'Encodes text to base64 or decodes base64 to text, returns a JSON object with the result string', UTILS_PRICE),
       ep('/utils/hash', 'Computes a cryptographic hash of input text, returns a JSON object with the hex digest string', UTILS_PRICE),
       ep('/utils/uuid', 'Generates random UUID v4 values, returns a JSON array of UUID strings', UTILS_PRICE),
