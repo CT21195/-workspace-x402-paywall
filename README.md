@@ -1,6 +1,6 @@
 # Spread Paywall API
 
-137 pay-per-call API endpoints, monetized with [x402 v2](https://www.x402.org/). No API keys, no accounts, no signups — callers pay per request in USDC and get JSON back.
+147 pay-per-call API endpoints, monetized with [x402 v2](https://www.x402.org/). No API keys, no accounts, no signups — callers pay per request in USDC and get JSON back.
 
 **Live:** https://workspace-x402-paywall.onrender.com
 **Machine-readable:** [/openapi.json](https://workspace-x402-paywall.onrender.com/openapi.json) · [/.well-known/x402.json](https://workspace-x402-paywall.onrender.com/.well-known/x402.json)
@@ -52,8 +52,8 @@ Unpaid request → `402` with the price and payment instructions. Paid request �
 - **Finance** ($0.005): `/verify/iban`, `/verify/routing`, `/verify/card`, `/verify/swift`, `/verify/isin`, `/verify/cusip`, `/verify/sedol`, `/verify/upi`
 - **Identity** ($0.005): `/verify/vat`, `/verify/ein`, `/verify/lei`, `/verify/ssn`, `/verify/passport/mrz`, `/verify/nino`, `/verify/sin`
 - **Retail & logistics** ($0.005): `/verify/upc`, `/verify/ean`, `/verify/isbn`, `/verify/vin`, `/verify/usps`, `/verify/ups`, `/verify/fedex`, `/verify/imei`, `/verify/meid`, `/verify/container`
-- **Network**: `/verify/email` ($0.01, live MX lookup), `/verify/domain` ($0.005, RDAP), `/verify/ssl` ($0.005); ($0.001): `/verify/ipv4`, `/verify/ipv6`, `/verify/mac`, `/verify/asn`, `/verify/e164`, `/verify/email-disposable` (throwaway-domain blocklist)
-- **Security**: `/verify/pwned` ($0.01, k-anonymity breach check); ($0.001): `/verify/jwt`, `/verify/base64`, `/verify/hash/md5`, `/verify/hash/sha256`, `/verify/uuid`, `/verify/ulid`, `/verify/password-strength` (0–4 score + crack-time estimate)
+- **Network**: `/verify/email` ($0.01, live MX lookup), `/verify/domain` ($0.005, RDAP), `/verify/ssl` ($0.005); ($0.001): `/verify/ipv4`, `/verify/ipv6`, `/verify/mac`, `/verify/asn`, `/verify/e164`, `/verify/email-disposable` (throwaway-domain blocklist), `/verify/dns` (A/MX/TXT/NS lookup)
+- **Security**: `/verify/pwned` ($0.01, k-anonymity breach check); ($0.001): `/verify/jwt`, `/verify/base64`, `/verify/hash/md5`, `/verify/hash/sha256`, `/verify/uuid`, `/verify/ulid`, `/verify/password-strength` (0–4 score + crack-time estimate), `/verify/ssh-key` (OpenSSH public-key structure check), `/verify/url-malicious` (URLhaus malware feed: clean/malicious/unknown)
 - **Crypto** ($0.001): `/verify/address/evm` (EIP-55), `/verify/address/solana`, `/verify/address/btc`, `/verify/address/polkadot`, `/verify/lightning` (BOLT11 invoice), `/verify/ens`, `/verify/contract` (smart-contract surface linter — flags `selfdestruct`, `delegatecall`, `tx.origin`, missing signer checks, etc.)
 - **Dev** ($0.001): `/verify/semver`, `/verify/cron`, `/verify/json`
 
@@ -106,4 +106,4 @@ Replacing `server.js` with a new version does not clear environment variables.
 
 ## Discovery
 
-Indexed on [x402scan](https://www.x402scan.com/server/a8cef910-5233-45ee-88cd-6f185ea4915a) and the Coinbase Bazaar. Full endpoint list with live prices is always at `/openapi.json`.
+Indexed on [x402sc

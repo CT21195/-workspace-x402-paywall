@@ -1,5 +1,6 @@
 import express from 'express';
-import { randomUUID, createHash } from 'node:crypto';
+import { randomUUID, createHash, randomBytes } from 'node:crypto';
+import { promises as dnsPromises } from 'node:dns';
 import { isIPv4 as netIsIPv4, isIPv6 as netIsIPv6 } from 'node:net';
 import tls from 'node:tls';
 import { paymentMiddleware, x402ResourceServer } from '@x402/express';
@@ -32,7 +33,7 @@ async function refreshDisposableList() {
 }
 refreshDisposableList();
 setInterval(refreshDisposableList, 24 * 3600 * 1000);
-const HELIUS_API_KEY = process.env.HELIUS_API_KEY || '';
+const HELIUS_API_KEY = process.env.HELIUS_API_KEY;
 // EVM networks: the free openx402.ai facilitator only settles exact-scheme
 // payments on Base. Other chains (eth/arbitrum/optimism/polygon/bsc) need
 // Coinbase CDP facilitator keys — add them here if those are ever configured.
@@ -196,7 +197,7 @@ async function baseSpreadSnapshot(token, notional = 1000) {
 }
 
 const CDP_KEY_ID = process.env.CDP_API_KEY_ID;
-const CDP_KEY_SECRET = process.env.CDP_API_KEY_SECRET;
+const CDP_KEY_SECRET = process.env.CDP_KEY_SECRET;
 const facilitatorClient = (CDP_KEY_ID && CDP_KEY_SECRET)
   ? new HTTPFacilitatorClient(createFacilitatorConfig(CDP_KEY_ID, CDP_KEY_SECRET))
   : new HTTPFacilitatorClient({ url: 'https://facilitator.openx402.ai' });
@@ -1361,6 +1362,82 @@ const VERIFY_FNS = {
     if (!walkOk) return { input: v, valid: false, reason: 'malformed tagged fields' };
     return { input: v, valid: true, network: nets[m[1]], amount_msat: amountMsat, created_at: new Date(ts * 1000).toISOString(), tagged_fields: fields, signature_present: true };
   },
+  // ---- batch 3: identity / research / dev identifiers (keyless) ----
+  async dns(v) {
+    const domain = (v || '').trim().toLowerCase().replace(/\.$/, '');
+    if (!/^(?=.{1,253}$)(?!-)[a-z0-9-]{1,63}(?<!-)(\.(?!-)[a-z0-9-]{1,63}(?<!-))*$/.test(domain))
+      return { input: v, valid: false, reason: 'bad domain format' };
+    const [a, mx, txt, ns] = await Promise.all([
+      dnsPromises.resolve4(domain).catch(() => []),
+      dnsPromises.resolveMx(domain).catch(() => []),
+      dnsPromises.resolveTxt(domain).catch(() => []),
+      dnsPromises.resolveNs(domain).catch(() => []),
+    ]);
+    const total = a.length + mx.length + txt.length + ns.length;
+    if (!total) return { domain, valid: false, reason: 'no DNS records found (nonexistent domain or DNS failure)' };
+    return { domain, valid: true, records: { a, mx, txt: txt.map(t => t.join('')), ns } };
+  },
+  orcid(v) {
+    const s = (v || '').trim();
+    const m = s.match(/^(\d{4})-(\d{4})-(\d{4})-(\d{3}[\dX])$/i);
+    if (!m) return { input: v, valid: false, reason: 'bad format: expected 0000-0000-0000-000X' };
+    const digits = (m[1] + m[2] + m[3] + m[4].slice(0, 3)).split('').map(Number);
+    const checkChar = m[4][3].toUpperCase();
+    let total = 0;
+    for (const d of digits) total = (total + d) * 2;
+    const expected = ((12 - (total % 11)) % 11) === 10 ? 'X' : String((12 - (total % 11)) % 11);
+    const valid = checkChar === expected;
+    return { input: v, valid, orcid: `${m[1]}-${m[2]}-${m[3]}-${m[4].slice(0, 3)}${checkChar}`, ...(valid ? {} : { reason: 'checksum mismatch (ISO 7064 MOD 11-2)' }) };
+  },
+  sshKey(v) {
+    const s = (v || '').trim();
+    const parts = s.split(/\s+/);
+    if (parts.length < 2) return { valid: false, reason: 'bad format: expected "<type> <base64> [comment]" (key material is never echoed back)' };
+    const [type, b64, ...rest] = parts;
+    const known = ['ssh-rsa', 'ssh-dss', 'ssh-ed25519', 'ecdsa-sha2-nistp256', 'ecdsa-sha2-nistp384', 'ecdsa-sha2-nistp521', 'sk-ssh-ed25519@openssh.com', 'sk-ecdsa-sha2-nistp256@openssh.com'];
+    if (!known.includes(type)) return { valid: false, reason: `unknown key type "${type}"` };
+    let buf;
+    try { buf = Buffer.from(b64, 'base64'); } catch { return { valid: false, reason: 'base64 decode failed' }; }
+    if (buf.length < 8) return { valid: false, reason: 'key blob too short' };
+    const len = buf.readUInt32BE(0);
+    if (4 + len > buf.length) return { valid: false, reason: 'truncated key blob' };
+    const innerType = buf.slice(4, 4 + len).toString('ascii');
+    if (innerType !== type) return { valid: false, reason: 'inner key type does not match the declared type' };
+    return { valid: true, type, comment: rest.join(' ') || null, blob_bytes: buf.length };
+  },
+  issn(v) {
+    const s = (v || '').trim().toUpperCase().replace(/-/g, '');
+    if (!/^\d{7}[\dX]$/.test(s)) return { input: v, valid: false, reason: 'bad format: expected XXXX-XXXX (last char may be X)' };
+    let sum = 0;
+    for (let i = 0; i < 7; i++) sum += parseInt(s[i], 10) * (8 - i);
+    const check = (11 - (sum % 11)) % 11;
+    const expected = check === 10 ? 'X' : String(check);
+    const valid = s[7] === expected;
+    return { input: v, valid, issn: `${s.slice(0, 4)}-${s.slice(4)}`, ...(valid ? {} : { reason: 'check digit mismatch' }) };
+  },
+  async urlMalicious(v) {
+    const s = (v || '').trim();
+    let u;
+    try { u = new URL(s); } catch { return { input: v, valid: false, reason: 'bad URL format' }; }
+    if (!/^https?:$/.test(u.protocol)) return { input: v, valid: false, reason: 'only http/https URLs are checked' };
+    try {
+      const ctrl = new AbortController();
+      const t = setTimeout(() => ctrl.abort(), 12000);
+      const r = await fetch('https://urlhaus.abuse.ch/api/v1/url/', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `url=${encodeURIComponent(s)}`,
+        signal: ctrl.signal,
+      });
+      clearTimeout(t);
+      const j = await r.json();
+      if (j.query_status === 'no_results') return { url: s, status: 'clean', detail: 'not present in the URLhaus malware feed' };
+      if (j.query_status === 'ok') return { url: s, status: 'malicious', threat: j.threat || null, signature: j.signature || null, first_seen: j.firstseen || null, urlhaus_reference: j.urlhaus_reference || null };
+      return { url: s, status: 'unknown', detail: `URLhaus query_status=${j.query_status}` };
+    } catch (e) {
+      return { url: s, status: 'unknown', detail: 'threat feed unreachable: ' + String((e && e.message) || e) };
+    }
+  },
 }; // end VERIFY_FNS
 
 // ---- endpoint table: path, price tier const name, query param, summary, operationId ----
@@ -1424,6 +1501,12 @@ const VERIFY_APIS = [
   { key: 'semver', path: '/verify/semver', price: 'UTILS_PRICE', param: 'version', op: 'verifySemver', summary: 'Validates Semantic Versioning 2.0.0 format' },
   { key: 'cron', path: '/verify/cron', price: 'UTILS_PRICE', param: 'cron', op: 'verifyCron', summary: 'Validates a cron expression and computes the next run time' },
   { key: 'json', path: '/verify/json', price: 'UTILS_PRICE', param: 'json', op: 'verifyJson', summary: 'Strictly validates JSON and pinpoints syntax errors' },
+  // Identity / research / dev (batch 3)
+  { key: 'dns', path: '/verify/dns', price: 'UTILS_PRICE', param: 'domain', op: 'verifyDns', summary: 'Looks up DNS records (A, MX, TXT, NS) for a domain' },
+  { key: 'orcid', path: '/verify/orcid', price: 'UTILS_PRICE', param: 'orcid', op: 'verifyOrcid', summary: 'Validates a researcher ORCID iD checksum (ISO 7064 MOD 11-2)' },
+  { key: 'sshKey', path: '/verify/ssh-key', price: 'UTILS_PRICE', param: 'key', op: 'verifySshKey', summary: 'Validates an OpenSSH public key format and internal structure (key never echoed)' },
+  { key: 'issn', path: '/verify/issn', price: 'UTILS_PRICE', param: 'issn', op: 'verifyIssn', summary: 'Validates an ISSN (journal/magazine identifier) check digit' },
+  { key: 'urlMalicious', path: '/verify/url-malicious', price: 'UTILS_PRICE', param: 'url', op: 'verifyUrlMalicious', summary: 'Checks a URL against the URLhaus malware feed: clean, malicious, or unknown' },
 ];
 // price tier -> { amount6, label }
 const VERIFY_TIERS = {
@@ -1622,6 +1705,215 @@ const UTILS_FNS = {
     const csv = keys.map(esc).join(',') + '\n' + arr.map(o => keys.map(k => esc(o ? o[k] : '')).join(',')).join('\n');
     return { rows: arr.length, columns: keys, csv };
   },
+  // ---- batch 3: generators & dev utilities (keyless, pure compute) ----
+  passwordGenerator(q) {
+    const length = Math.min(128, Math.max(4, parseInt(q.length || '16', 10) || 16));
+    const count = Math.min(10, Math.max(1, parseInt(q.count || '1', 10) || 1));
+    let chars = '';
+    if (q.lowercase !== 'false') chars += 'abcdefghijkmnopqrstuvwxyz'; // no l
+    if (q.uppercase !== 'false') chars += 'ABCDEFGHJKLMNPQRSTUVWXYZ'; // no I, O
+    if (q.digits !== 'false') chars += '23456789'; // no 0, 1
+    if (q.symbols === 'true') chars += '!@#$%^&*()-_=+[]{};:,.<>?';
+    if (!chars) return { valid: false, reason: 'all character sets disabled' };
+    const out = [];
+    for (let c = 0; c < count; c++) {
+      const rb = randomBytes(length);
+      let pw = '';
+      for (let i = 0; i < length; i++) pw += chars[rb[i] % chars.length];
+      out.push(pw);
+    }
+    return { count, length, passwords: out };
+  },
+  jwtDecode(q) {
+    const t = String(q.token || '').trim();
+    if (t.length > 20000) return { valid: false, reason: 'token too long (max 20000 chars)' };
+    const parts = t.split('.');
+    if (parts.length < 2 || parts.length > 3) return { valid: false, reason: 'bad JWT shape: expected header.payload[.signature]' };
+    const b64u = (s) => Buffer.from(s.replace(/-/g, '+').replace(/_/g, '/'), 'base64').toString('utf8');
+    try {
+      const header = JSON.parse(b64u(parts[0]));
+      const payload = JSON.parse(b64u(parts[1]));
+      return { valid: true, alg: header.alg || null, header, payload, signature_present: parts.length === 3 && !!parts[2], note: 'signature NOT verified — decode only' };
+    } catch (e) { return { valid: false, reason: 'header/payload are not valid base64url JSON' }; }
+  },
+  jsonValidate(q) {
+    const jstr = String(q.json || ''), sstr = String(q.schema || '');
+    if (jstr.length > 12000 || sstr.length > 12000) return { valid: false, reason: 'json/schema too large (max 12000 chars each)' };
+    let data, schema;
+    try { data = JSON.parse(jstr); } catch (e) { return { valid: false, reason: 'invalid JSON: ' + String((e && e.message) || e) }; }
+    try { schema = JSON.parse(sstr); } catch (e) { return { valid: false, reason: 'invalid schema JSON: ' + String((e && e.message) || e) }; }
+    const errors = [];
+    const check = (val, sch, path) => {
+      if (!sch || typeof sch !== 'object' || errors.length > 50) return;
+      if (sch.type) {
+        const t = Array.isArray(val) ? 'array' : val === null ? 'null' : typeof val;
+        const want = Array.isArray(sch.type) ? sch.type : [sch.type];
+        const ok = want.some(w => w === t || (w === 'integer' && t === 'number' && Number.isInteger(val)) || (w === 'number' && t === 'number'));
+        if (!ok) { errors.push(`${path}: expected ${want.join('/')} but got ${t}`); return; }
+      }
+      if (sch.enum && !sch.enum.some(e => JSON.stringify(e) === JSON.stringify(val))) errors.push(`${path}: not one of the allowed enum values`);
+      if (typeof val === 'string') {
+        if (sch.minLength != null && val.length < sch.minLength) errors.push(`${path}: shorter than minLength ${sch.minLength}`);
+        if (sch.maxLength != null && val.length > sch.maxLength) errors.push(`${path}: longer than maxLength ${sch.maxLength}`);
+        if (sch.pattern) { try { if (!new RegExp(sch.pattern).test(val)) errors.push(`${path}: does not match pattern`); } catch { errors.push(`${path}: invalid schema pattern`); } }
+      }
+      if (typeof val === 'number') {
+        if (sch.minimum != null && val < sch.minimum) errors.push(`${path}: below minimum ${sch.minimum}`);
+        if (sch.maximum != null && val > sch.maximum) errors.push(`${path}: above maximum ${sch.maximum}`);
+      }
+      if (Array.isArray(val)) {
+        if (sch.minItems != null && val.length < sch.minItems) errors.push(`${path}: fewer than minItems ${sch.minItems}`);
+        if (sch.maxItems != null && val.length > sch.maxItems) errors.push(`${path}: more than maxItems ${sch.maxItems}`);
+        if (sch.items) val.forEach((it, i) => check(it, sch.items, `${path}[${i}]`));
+      }
+      if (val && typeof val === 'object' && !Array.isArray(val)) {
+        for (const r of (sch.required || [])) if (!(r in val)) errors.push(`${path}: missing required property "${r}"`);
+        for (const [k, sub] of Object.entries(sch.properties || {})) if (k in val) check(val[k], sub, path ? `${path}.${k}` : k);
+        if (sch.additionalProperties === false) {
+          const allowed = new Set(Object.keys(sch.properties || {}));
+          for (const k of Object.keys(val)) if (!allowed.has(k)) errors.push(`${path}: additional property "${k}" not allowed`);
+        }
+      }
+    };
+    check(data, schema, '$');
+    return { valid: errors.length === 0, violations: errors.slice(0, 50), ...(errors.length > 50 ? { note: 'violation list truncated at 50' } : {}) };
+  },
+  cronExplain(q) {
+    const expr = String(q.cron || '').trim();
+    let parts = expr.split(/\s+/);
+    if (parts.length === 6) parts = parts.slice(1); // tolerate a seconds field
+    if (parts.length !== 5) return { input: expr, valid: false, reason: 'expected 5 fields: minute hour day-of-month month day-of-week' };
+    const MONTHS = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
+    const DOWS = { sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6 };
+    const MONTH_NAMES = ['', 'January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+    const DOW_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const num = (tok, names, min, max) => {
+      const t = String(tok).toLowerCase();
+      let v = names[t] != null ? names[t] : (/^\d+$/.test(t) ? parseInt(t, 10) : NaN);
+      if (t === '7' && max === 7) v = 0; // Sunday alias
+      return (Number.isInteger(v) && v >= min && v <= max) ? v : null;
+    };
+    const descList = (f, min, max, names, unitSing, unitPl, nameOf) => {
+      if (f === '*') return `every ${unitSing}`;
+      const bits = [];
+      for (const seg of f.split(',')) {
+        let m = seg.match(/^\*\/(\d+)$/);
+        if (m) { const n = parseInt(m[1], 10); if (n < 1) return null; bits.push(`every ${n} ${n === 1 ? unitSing : unitPl}`); continue; }
+        m = seg.match(/^([^/]+)\/(\d+)$/);
+        if (m) {
+          const step = parseInt(m[2], 10);
+          if (step < 1) return null;
+          const rng = m[1].match(/^(\S+)-(\S+)$/);
+          const fmtV = (t) => { const v = num(t, names, min, max); return v == null ? null : (nameOf ? nameOf(v) : v); };
+          if (rng) {
+            const a = fmtV(rng[1]), b = fmtV(rng[2]);
+            if (a == null || b == null) return null;
+            bits.push(`every ${step} ${unitPl} from ${a} through ${b}`);
+          } else if (m[1] === '*') {
+            bits.push(`every ${step} ${step === 1 ? unitSing : unitPl}`);
+          } else {
+            const v = fmtV(m[1]);
+            if (v == null) return null;
+            bits.push(`every ${step} ${unitPl} starting at ${v}`);
+          }
+          continue;
+        }
+        const r = seg.match(/^(\S+)-(\S+)$/);
+        if (r) {
+          const a = num(r[1], names, min, max), b = num(r[2], names, min, max);
+          if (a == null || b == null) return null;
+          bits.push(`from ${nameOf ? nameOf(a) : a} through ${nameOf ? nameOf(b) : b}`);
+          continue;
+        }
+        const v = num(seg, names, min, max);
+        if (v == null) return null;
+        bits.push(nameOf ? nameOf(v) : String(v));
+      }
+      return bits.join(', ');
+    };
+    const miD = descList(parts[0], 0, 59, {}, 'minute', 'minutes');
+    const hrD = descList(parts[1], 0, 23, {}, 'hour', 'hours');
+    const domD = descList(parts[2], 1, 31, {}, 'day of the month', 'days of the month');
+    const monD = descList(parts[3], 1, 12, MONTHS, 'month', 'months', (v) => MONTH_NAMES[v]);
+    const dowD = descList(parts[4], 0, 7, DOWS, 'day of the week', 'days of the week', (v) => DOW_NAMES[v % 7]);
+    if ([miD, hrD, domD, monD, dowD].some(d => d == null)) return { input: expr, valid: false, reason: 'unparseable field (check ranges and names)' };
+    const simple = (f) => /^\d+$/.test(f);
+    let plain = null;
+    if (parts.every(p => p === '*')) plain = 'Every minute';
+    else if (parts[0].startsWith('*/') && parts.slice(1).every(p => p === '*')) plain = `Every ${parts[0].slice(2)} minutes`;
+    else if (simple(parts[0]) && parts[1] === '*' && parts.slice(2).every(p => p === '*')) plain = `At ${parts[0].padStart(2, '0')} minutes past every hour`;
+    else if (simple(parts[0]) && simple(parts[1]) && parts[2] === '*' && parts[3] === '*' && parts[4] === '*') plain = `At ${parts[1].padStart(2, '0')}:${parts[0].padStart(2, '0')} every day`;
+    else if (simple(parts[0]) && simple(parts[1]) && parts[2] === '*' && parts[3] === '*' && simple(parts[4])) plain = `At ${parts[1].padStart(2, '0')}:${parts[0].padStart(2, '0')} every ${DOW_NAMES[parseInt(parts[4], 10) % 7]}`;
+    else if (simple(parts[0]) && simple(parts[1]) && simple(parts[2]) && parts[3] === '*' && parts[4] === '*') plain = `At ${parts[1].padStart(2, '0')}:${parts[0].padStart(2, '0')} on day ${parts[2]} of every month`;
+    return { input: expr, valid: true, fields: { minute: miD, hour: hrD, day_of_month: domD, month: monD, day_of_week: dowD }, ...(plain ? { plain_english: plain } : {}) };
+  },
+  xml2json(q) {
+    const xml = String(q.xml || '');
+    if (!xml.trim()) return { valid: false, reason: 'missing ?xml= parameter' };
+    if (xml.length > 100000) return { valid: false, reason: 'too large (max 100,000 chars)' };
+    const decEnt = (s) => s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&amp;/g, '&').replace(/&quot;/g, '"').replace(/&apos;/g, "'");
+    try {
+      let i = 0;
+      const n = xml.length;
+      const skipWS = () => { while (i < n && /\s/.test(xml[i])) i++; };
+      const parseNode = () => {
+        skipWS();
+        if (xml[i] !== '<') throw new Error('expected < at position ' + i);
+        if (xml.startsWith('<!--', i)) { const e = xml.indexOf('-->', i + 4); if (e < 0) throw new Error('unterminated comment'); i = e + 3; return parseNode(); }
+        if (xml.startsWith('<?', i)) { const e = xml.indexOf('?>', i + 2); if (e < 0) throw new Error('unterminated processing instruction'); i = e + 2; return parseNode(); }
+        if (xml.startsWith('<![CDATA[', i)) { const e = xml.indexOf(']]>', i + 9); if (e < 0) throw new Error('unterminated CDATA'); const t = xml.slice(i + 9, e); i = e + 3; return t; }
+        if (xml[i + 1] === '/') throw new Error('unexpected closing tag at position ' + i);
+        i++;
+        const tm = /^[A-Za-z_][\w.:-]*/.exec(xml.slice(i));
+        if (!tm) throw new Error('bad tag name at position ' + i);
+        const tag = tm[0]; i += tag.length;
+        const attrs = {};
+        for (;;) {
+          skipWS();
+          if (xml.startsWith('/>', i)) { i += 2; return { tag, attrs, children: [] }; }
+          if (xml[i] === '>') { i++; break; }
+          const am = /^([A-Za-z_][\w.:-]*)\s*=\s*("[^"]*"|'[^']*')/.exec(xml.slice(i));
+          if (!am) throw new Error('bad attribute at position ' + i);
+          attrs[am[1]] = decEnt(am[2].slice(1, -1));
+          i += am[0].length;
+        }
+        const children = [];
+        let text = '';
+        for (;;) {
+          if (i >= n) throw new Error(`unterminated <${tag}>`);
+          if (xml.startsWith('</', i)) {
+            const cm = /^<\/([A-Za-z_][\w.:-]*)\s*>/.exec(xml.slice(i));
+            if (!cm) throw new Error('bad closing tag at position ' + i);
+            if (cm[1] !== tag) throw new Error(`mismatched tags: <${tag}> closed by </${cm[1]}>`);
+            i += cm[0].length;
+            break;
+          }
+          if (xml[i] === '<') { if (text.trim()) children.push(decEnt(text)); text = ''; children.push(parseNode()); }
+          else { text += xml[i]; i++; }
+        }
+        if (text.trim()) children.push(decEnt(text));
+        return { tag, attrs, children };
+      };
+      skipWS();
+      const root = parseNode();
+      if (typeof root === 'string') throw new Error('no root element');
+      skipWS();
+      if (i < n) throw new Error('trailing content after root element at position ' + i);
+      const convert = (node) => {
+        const o = {};
+        if (Object.keys(node.attrs).length) o.$ = node.attrs;
+        const texts = [], groups = {};
+        for (const c of node.children) {
+          if (typeof c === 'string') { const t = c.trim(); if (t) texts.push(t); continue; }
+          (groups[c.tag] = groups[c.tag] || []).push(convert(c));
+        }
+        for (const [t, arr] of Object.entries(groups)) o[t] = arr.length === 1 ? arr[0] : arr;
+        if (texts.length) o._ = texts.join(' ');
+        return o;
+      };
+      return { valid: true, root: root.tag, json: { [root.tag]: convert(root) }, note: 'attributes under $, text under _, repeated tags become arrays' };
+    } catch (e) { return { valid: false, reason: String((e && e.message) || e) }; }
+  },
 };
 
 const UTILS_APIS = [
@@ -1632,6 +1924,11 @@ const UTILS_APIS = [
   { key: 'html2md', path: '/utils/html2md', params: [{ n: 'html', req: true, d: 'HTML text' }], op: 'utilsHtml2Md', summary: 'Converts HTML to Markdown-ish plain text' },
   { key: 'csv2json', path: '/utils/csv2json', params: [{ n: 'csv', req: true, d: 'CSV text (first row = headers)' }], op: 'utilsCsv2Json', summary: 'Converts CSV to a JSON array of objects' },
   { key: 'json2csv', path: '/utils/json2csv', params: [{ n: 'json', req: true, d: 'JSON array of objects' }], op: 'utilsJson2Csv', summary: 'Converts a JSON array of objects to CSV' },
+  { key: 'passwordGenerator', path: '/utils/password-generator', params: [{ n: 'length', req: false, d: 'Password length (default 16, max 128)' }, { n: 'count', req: false, d: 'How many passwords (default 1, max 10)' }, { n: 'symbols', req: false, d: 'Include symbols: true/false (default false)' }], op: 'utilsPasswordGenerator', summary: 'Generates cryptographically random passwords (ambiguous characters excluded)' },
+  { key: 'jwtDecode', path: '/utils/jwt-decode', params: [{ n: 'token', req: true, d: 'JWT string (signature is NOT verified)' }], op: 'utilsJwtDecode', summary: 'Decodes a JWT header and payload without verifying the signature' },
+  { key: 'jsonValidate', path: '/utils/json-validate', params: [{ n: 'json', req: true, d: 'JSON document to check (max 12000 chars)' }, { n: 'schema', req: true, d: 'JSON Schema to check against (max 12000 chars)' }], op: 'utilsJsonValidate', summary: 'Validates a JSON document against a JSON Schema (type, required, properties, items, enum, ranges, patterns)' },
+  { key: 'cronExplain', path: '/utils/cron-explain', params: [{ n: 'cron', req: true, d: 'Cron expression (5 fields)' }], op: 'utilsCronExplain', summary: 'Explains a cron expression in plain English, field by field' },
+  { key: 'xml2json', path: '/utils/xml2json', params: [{ n: 'xml', req: true, d: 'XML text (max 100,000 chars)' }], op: 'utilsXml2Json', summary: 'Converts XML to JSON (attributes under $, text under _, repeats become arrays)' },
 ];
 
 function buildUtilsMw() {
@@ -2705,9 +3002,9 @@ registerMasterRoutes(app);
 app.get('/openapi.json', (req, res) => res.json({
   openapi: '3.1.0',
   info: {
-    title: 'x402 master data API — 137 endpoints',
+    title: 'x402 master data API — 147 endpoints',
     version: '2.0.0',
-    description: '137 pay-per-call APIs: AI text/image generation ($0.01), Polymarket odds, crypto prices, DeFi yields, FX rates, weather, IP/geo, FBI wanted, SEC tickers, clinical trials, 250M academic papers, Stack Overflow, meme-coin launchpads (pump.fun, Clanker, Four.meme, SunPump), tokenized stocks, Solana top 100, Base DEX spreads, and 40+ more. $0.005/call standard. USDC on Base and Solana via x402.',
+    description: '147 pay-per-call APIs: AI text/image generation ($0.01), Polymarket odds, crypto prices, DeFi yields, FX rates, weather, IP/geo, FBI wanted, SEC tickers, clinical trials, 250M academic papers, Stack Overflow, meme-coin launchpads (pump.fun, Clanker, Four.meme, SunPump), tokenized stocks, Solana top 100, Base DEX spreads, and 40+ more. $0.005/call standard. USDC on Base and Solana via x402.',
     contact: { email: 'ctiernan21@gmail.com' },
   },
   servers: [{ url: API_URL }],
@@ -3365,8 +3662,8 @@ app.get('/.well-known/x402.json', (req, res) => {
   ];
   const ep = (path, description, price) => ({ path, method: 'GET', description, price, accepts: acceptsForDoc(price) });
   res.json({
-    name: 'x402 master data API — 137 endpoints',
-    description: '137 pay-per-call APIs: AI text/image generation ($0.01), Polymarket odds, crypto prices, DeFi yields, FX rates, weather, IP/geo, FBI wanted, SEC tickers, clinical trials, 250M academic papers, Stack Overflow, meme-coin launchpads (pump.fun, Clanker, Four.meme, SunPump), tokenized stocks, Solana top 100, Base DEX spreads, and 40+ more. $0.005/call standard. USDC on Base and Solana via x402.',
+    name: 'x402 master data API — 147 endpoints',
+    description: '147 pay-per-call APIs: AI text/image generation ($0.01), Polymarket odds, crypto prices, DeFi yields, FX rates, weather, IP/geo, FBI wanted, SEC tickers, clinical trials, 250M academic papers, Stack Overflow, meme-coin launchpads (pump.fun, Clanker, Four.meme, SunPump), tokenized stocks, Solana top 100, Base DEX spreads, and 40+ more. $0.005/call standard. USDC on Base and Solana via x402.',
     url: API_URL,
     x402Version: 2,
     networks: [...Object.values(EVM_NETWORKS), SOL_NETWORK],
