@@ -537,9 +537,91 @@ app.use((req, res, next) => {
   next();
 });
 
+// 402 body mirror: @x402/express sends the payment terms ONLY in the
+// PAYMENT-REQUIRED header, with an empty {} body. Some probers and clients
+// (x402dash, body-reading indexers) read the body instead — mirror the
+// decoded header payload into the body so both readers work. The header
+// stays canonical; this only fills an otherwise-empty 402 body.
+app.use((req, res, next) => {
+  const origJson = res.json.bind(res);
+  res.json = (body) => {
+    if (res.statusCode === 402 && body && typeof body === 'object' && Object.keys(body).length === 0) {
+      const hdr = res.getHeader('payment-required');
+      if (hdr) {
+        try { return origJson(JSON.parse(Buffer.from(String(hdr), 'base64').toString('utf8'))); } catch { /* fall through to the empty body */ }
+      }
+    }
+    return origJson(body);
+  };
+  next();
+});
+
+// Provider metadata for Bazaar / Agentic.Market: the x402 docs' "Service
+// Metadata" fields (serviceName, tags, iconUrl) ride on each route's
+// resource object. Without them the Bazaar stored all 57 records with
+// serviceName:null / tags:null (verified by full-index scan, Oct 22) —
+// nothing for storefronts to group, name, or match in search.
+// withMeta() attaches the metadata + a representative output example to
+// every route config before the paywall is built.
+const SERVICE_NAME = 'Spread Paywall API';
+function tagsForPath(p) {
+  const seg = p.split('/')[1] || '';
+  const fam = {
+    spread: ['crypto', 'trading', 'arbitrage', 'solana', 'data'],
+    ai: ['ai', 'llm', 'inference', 'models'],
+    solana: ['solana', 'crypto', 'tokens', 'blockchain'],
+    pump: ['solana', 'memecoins', 'crypto', 'trending'],
+    meme: ['memecoins', 'crypto', 'solana'],
+    search: ['search', 'web', 'data'],
+    lookup: ['data', 'lookup'],
+    verify: ['verification', 'identity', 'validation'],
+    utils: ['utilities', 'tools', 'developer'],
+    stocks: ['stocks', 'finance', 'markets'],
+    crypto: ['crypto', 'markets', 'prices'],
+    weather: ['weather', 'data'],
+    science: ['science', 'data'],
+    space: ['space', 'data'],
+    gov: ['government', 'data', 'public-records'],
+    ref: ['reference', 'data'],
+    fun: ['entertainment', 'media'],
+    food: ['food', 'recipes'],
+    dev: ['developer', 'tools', 'code'],
+    wallet: ['crypto', 'wallets', 'portfolio'],
+    'whale-watch': ['crypto', 'whales', 'trading', 'alerts'],
+    ping: ['health', 'status', 'testing'],
+  }[seg];
+  return (fam || ['data', 'api', 'x402']).slice(0, 5);
+}
+const OUTPUT_EXAMPLES = {
+  '/spread': { pair: 'SOL/USDC', widest: { buy: 'Kraken', sell: 'Orca', gross_bps: 38.2, est_net_bps: 31.7 } },
+  '/ai/ask': { model: 'openai-fast', answer: 'Paris is the capital of France.' },
+  '/ai/image': { image_url: 'https://example.com/generated-image.png' },
+  '/ai/models': { models: [{ id: 'openai-fast', type: 'text' }] },
+  '/ping': { status: 'ok', timestamp: '2026-10-22T00:00:00.000Z' },
+  '/solana/audit': { mint: 'So11111111111111111111111111111111111111112', risk: 'low', checks: { mint_authority: null, freeze_authority: null } },
+  '/scrape': { url: 'https://example.com', text: 'Example Domain' },
+};
+function exampleForPath(p) {
+  if (OUTPUT_EXAMPLES[p]) return OUTPUT_EXAMPLES[p];
+  if (p.startsWith('/search/') || p.startsWith('/lookup/')) return { results: [{ title: 'Example result' }] };
+  if (p.startsWith('/utils/')) return { result: 'example-value' };
+  return { ok: true };
+}
+function withMeta(routes) {
+  for (const [key, cfg] of Object.entries(routes)) {
+    const p = key.split(' ')[1] || '';
+    if (!cfg.serviceName) cfg.serviceName = SERVICE_NAME;
+    if (!cfg.tags) cfg.tags = tagsForPath(p);
+    if (!cfg.mimeType) cfg.mimeType = 'application/json';
+    const bz = cfg.extensions && cfg.extensions.bazaar;
+    if (bz && bz.info && !bz.info.output) bz.info.output = { example: exampleForPath(p) };
+  }
+  return routes;
+}
+
 const masterMw = buildMasterMw();
 app.use(paymentMiddleware(
-  {
+  withMeta({
     ...masterMw,
     'GET /spread': {
       accepts: acceptsFor(PRICE),
@@ -710,7 +792,7 @@ app.use(paymentMiddleware(
       description: 'Health check endpoint for x402 payment flow testing: returns a JSON object with service status and the current server timestamp',
       extensions: bazaarExt(),
     },
-  },
+  }),
   resourceServer,
 ));
 
