@@ -126,7 +126,9 @@ async function latestSpread(notional = 1000) {
       sell_at: sell,
       sell_price: all[sell],
       gross_pct: +gross.toFixed(4),
+      gross_bps: +(gross * 100).toFixed(2),
       est_net_pct: +estNet.toFixed(4),
+      est_net_bps: +(estNet * 100).toFixed(2),
     },
     notional_usd: notional,
   };
@@ -244,6 +246,10 @@ const MASTER_APIS = [
     url: q => `https://image.pollinations.ai/prompt/${encodeURIComponent(q.prompt)}?width=1024&height=1024&nologo=true`,
     map: (d, q) => ({ image_url: `https://image.pollinations.ai/prompt/${encodeURIComponent(q.prompt)}?width=1024&height=1024&nologo=true` }),
     passthrough: true },
+  { path: '/ai/models', price: UTILS_PRICE, tag: 'AI', summary: 'Returns a JSON array of the AI models this API can serve (live from the upstream provider), each with name, description and capabilities',
+    params: [],
+    url: () => 'https://text.pollinations.ai/models',
+    map: d => (Array.isArray(d) ? d : []).map(m => ({ name: m.name, description: m.description, reasoning: !!m.reasoning, vision: !!m.vision, audio: !!m.audio, tools: !!m.tools, input: m.input_modalities || [], output: m.output_modalities || [], aliases: m.aliases || [] })) },
 
   // Prediction markets
   { path: '/markets/polymarket', price: PRICE, tag: 'Markets', summary: 'Returns a JSON array of live Polymarket prediction market events with odds and volume',
@@ -514,6 +520,14 @@ function buildMasterX402eps(ep) {
 const app = express();
 app.set('trust proxy', 1); // Render reverse proxy: keeps resource URLs https:// for CDP Bazaar
 
+// x402-list.com ownership proof for the Oct 22, 2026 listing update
+// (request 45bef350-938e-435e-a023-6524d74aa36d; token expires Oct 25, 2026).
+// Must sit before the paywall so the directory's verifier can read it unpaid.
+// Safe to remove once the update is verified.
+app.get('/.well-known/x402list.txt', (req, res) => {
+  res.type('text/plain').send('x402list-verify--H284N8TlfWBvM0OGjfbT-tbHhlofKprq3DZdS9Qly4\n');
+});
+
 // HEAD guard (must sit before the paywall): @x402/express <=2.28.0 does not
 // match HEAD against "GET /route" resources, so a HEAD request skips payment
 // while Express still runs the GET handler — unpaid upstream/API/LLM work.
@@ -691,6 +705,11 @@ app.use(paymentMiddleware(
       description: 'Returns a JSON object with the current Unix timestamp integer and ISO 8601 time string',
       extensions: bazaarExt(),
     },
+    'GET /ping': {
+      accepts: acceptsFor(UTILS_PRICE),
+      description: 'Health check endpoint for x402 payment flow testing: returns a JSON object with service status and the current server timestamp',
+      extensions: bazaarExt(),
+    },
   },
   resourceServer,
 ));
@@ -710,6 +729,7 @@ app.get('/', (req, res) => res.json({
     'GET /utils/uuid?count=5',
     'GET /utils/ip',
     'GET /utils/time',
+    'GET /ping',
     'GET /spread?notional=1000',
     'GET /search/github?q=x402&type=repositories',
     'GET /search/npm?q=express',
@@ -774,6 +794,11 @@ app.get('/utils/time', (req, res) => {
   if (format === 'iso') return res.type('text/plain').send(now.toISOString());
   if (format === 'unix') return res.type('text/plain').send(String(Math.floor(now.getTime() / 1000)));
   res.json({ unix: Math.floor(now.getTime() / 1000), unix_ms: now.getTime(), iso8601: now.toISOString() });
+});
+
+app.get('/ping', (req, res) => {
+  const now = new Date();
+  res.json({ status: 'ok', timestamp: Math.floor(now.getTime() / 1000), iso8601: now.toISOString() });
 });
 
 // ---- pump.fun data (via GeckoTerminal + DexScreener; pump.fun API blocks non-browser) ----
@@ -1343,9 +1368,9 @@ registerMasterRoutes(app);
 app.get('/openapi.json', (req, res) => res.json({
   openapi: '3.1.0',
   info: {
-    title: 'x402 master data API — 66 endpoints',
+    title: 'x402 master data API — 73 endpoints',
     version: '2.0.0',
-    description: '66 pay-per-call APIs: AI text/image generation ($0.01), Polymarket odds, crypto prices, DeFi yields, FX rates, weather, IP/geo, FBI wanted, SEC tickers, clinical trials, 250M academic papers, Stack Overflow, meme-coin launchpads (pump.fun, Clanker, Four.meme, SunPump), tokenized stocks, Solana top 100, and 40+ more. $0.005/call standard. USDC on Base and Solana via x402.',
+    description: '73 pay-per-call APIs: AI text/image generation ($0.01), Polymarket odds, crypto prices, DeFi yields, FX rates, weather, IP/geo, FBI wanted, SEC tickers, clinical trials, 250M academic papers, Stack Overflow, meme-coin launchpads (pump.fun, Clanker, Four.meme, SunPump), tokenized stocks, Solana top 100, and 40+ more. $0.005/call standard. USDC on Base and Solana via x402.',
     contact: { email: 'ctiernan21@gmail.com' },
   },
   servers: [{ url: API_URL }],
@@ -1425,6 +1450,19 @@ app.get('/openapi.json', (req, res) => res.json({
         ],
         responses: {
           200: { description: 'Time', content: { 'application/json': { schema: { type: 'object' } } } },
+          402: { description: 'Payment Required: $0.001 USDC via x402' },
+        },
+      },
+    },
+    '/ping': {
+      get: {
+        operationId: 'ping',
+        summary: 'Health check endpoint for x402 payment flow testing: returns a JSON object with service status and the current server timestamp',
+        tags: ['Utilities'],
+        'x-payment-info': { price: { mode: 'fixed', currency: 'USD', amount: '0.001000' }, protocols: [{ x402: {} }] },
+        parameters: [],
+        responses: {
+          200: { description: 'Status', content: { 'application/json': { schema: { type: 'object' } } } },
           402: { description: 'Payment Required: $0.001 USDC via x402' },
         },
       },
@@ -1859,7 +1897,9 @@ app.get('/openapi.json', (req, res) => res.json({
               sell_at: { type: 'string' },
               sell_price: { type: 'number' },
               gross_pct: { type: 'number' },
+              gross_bps: { type: 'number' },
               est_net_pct: { type: 'number' },
+              est_net_bps: { type: 'number' },
             },
           },
           notional_usd: { type: 'number' },
