@@ -237,11 +237,11 @@ const num = masterNum; // alias used inside MASTER_APIS url builders
 
 const MASTER_APIS = [
   // AI inference (highest-value x402 category)
-  { path: '/ai/ask', price: AI_PRICE, tag: 'AI', summary: 'Sends a text prompt to an LLM and returns the generated text response as a string in a JSON object',
+  { path: '/ai/ask', price: PRICE, tag: 'AI', summary: 'Ask an LLM anything: sends a text prompt and returns the generated answer as text - general-purpose inference (reasoning, drafting, summarization, Q&A) for agents without their own model key',
     params: [{ n: 'prompt', req: true, d: 'Requires a text string prompt for the LLM' }],
     url: q => `https://text.pollinations.ai/${encodeURIComponent(q.prompt)}`,
     map: d => ({ response: typeof d === 'string' ? d : JSON.stringify(d) }) },
-  { path: '/ai/image', price: AI_PRICE, tag: 'AI', summary: 'Generates a 1024x1024 image from a text description and returns a JSON object with the image URL string',
+  { path: '/ai/image', price: AI_PRICE, tag: 'AI', summary: 'Generates a 1024x1024 image from a text description and returns a ready-to-use image URL - illustrations, thumbnails and visual assets on demand',
     params: [{ n: 'prompt', req: true, d: 'Requires a text string describing the image to generate' }],
     url: q => `https://image.pollinations.ai/prompt/${encodeURIComponent(q.prompt)}?width=1024&height=1024&nologo=true`,
     map: (d, q) => ({ image_url: `https://image.pollinations.ai/prompt/${encodeURIComponent(q.prompt)}?width=1024&height=1024&nologo=true` }),
@@ -543,7 +543,7 @@ app.use(paymentMiddleware(
     ...masterMw,
     'GET /spread': {
       accepts: acceptsFor(PRICE),
-      description: 'Returns a JSON object with live SOL prices from the top 5 centralized exchanges and top 5 Solana DEXs, plus the widest bid-ask spread detected',
+      description: 'Live SOL prices from the top 5 centralized exchanges and top 5 Solana DEXs with the widest bid-ask spread, in gross and estimated net basis points - for arbitrage screening, price discovery and execution checks',
       extensions: bazaarExt(),
     },
     'GET /verify/npi': {
@@ -653,7 +653,7 @@ app.use(paymentMiddleware(
     },
     'GET /scrape': {
       accepts: acceptsFor(AI_PRICE),
-      description: 'Fetches a URL and returns the page content as clean Markdown text in a JSON object',
+      description: 'Fetches any public URL and returns the page content as clean Markdown text - for agents that need to read articles, docs and web pages without browser tooling',
       extensions: bazaarExt([{ n: 'url', req: true, d: 'Requires a valid public http:// or https:// URL string' }]),
     },
     'GET /whale-watch': {
@@ -666,7 +666,7 @@ app.use(paymentMiddleware(
     },
     'GET /solana/audit': {
       accepts: acceptsFor(ALPHA_PRICE),
-      description: 'Returns a JSON object with RugCheck risk score, risk level, and list of specific risk findings for a Solana token',
+      description: 'Audits a Solana token for rug-pull risk: RugCheck risk score, risk level and the specific risk findings - for agents screening tokens before trading',
       extensions: bazaarExt([{ n: 'token', req: true, d: 'Requires a valid 32-44 character base58 Solana token mint address' }]),
     },
     'GET /wallet/portfolio': {
@@ -1470,7 +1470,7 @@ app.get('/openapi.json', (req, res) => res.json({
     '/spread': {
       get: {
         operationId: 'getSpread',
-        summary: 'Returns a JSON object with live SOL prices from the top 5 centralized exchanges and top 5 Solana DEXs, plus the widest bid-ask spread detected',
+        summary: 'Live SOL prices from the top 5 centralized exchanges and top 5 Solana DEXs with the widest bid-ask spread, in gross and estimated net basis points - for arbitrage screening, price discovery and execution checks',
         tags: ['Data'],
         'x-payment-info': { price: { mode: 'fixed', currency: 'USD', amount: '0.005000' }, protocols: [{ x402: {} }] },
         parameters: [
@@ -1805,7 +1805,7 @@ app.get('/openapi.json', (req, res) => res.json({
     '/scrape': {
       get: {
         operationId: 'scrapeUrl',
-        summary: 'Fetches a URL and returns the page content as clean Markdown text in a JSON object',
+        summary: 'Fetches any public URL and returns the page content as clean Markdown text - for agents that need to read articles, docs and web pages without browser tooling',
         tags: ['AI Data'],
         'x-payment-info': { price: { mode: 'fixed', currency: 'USD', amount: '0.010000' }, protocols: [{ x402: {} }] },
         parameters: [
@@ -1836,7 +1836,7 @@ app.get('/openapi.json', (req, res) => res.json({
     '/solana/audit': {
       get: {
         operationId: 'solanaAudit',
-        summary: 'Returns a JSON object with RugCheck risk score, risk level, and list of specific risk findings for a Solana token',
+        summary: 'Audits a Solana token for rug-pull risk: RugCheck risk score, risk level and the specific risk findings - for agents screening tokens before trading',
         tags: ['Crypto'],
         'x-payment-info': { price: { mode: 'fixed', currency: 'USD', amount: '0.050000' }, protocols: [{ x402: {} }] },
         parameters: [
@@ -1951,7 +1951,7 @@ app.get('/.well-known/x402.json', (req, res) => {
       ep('/utils/uuid', 'Generates random UUID v4 values, returns a JSON array of UUID strings', UTILS_PRICE),
       ep('/utils/ip', 'Returns a JSON object with the caller IP address as a string', UTILS_PRICE),
       ep('/utils/time', 'Returns a JSON object with the current Unix timestamp integer and ISO 8601 time string', UTILS_PRICE),
-      ep('/spread', 'Returns a JSON object with live SOL prices from the top 5 centralized exchanges and top 5 Solana DEXs, plus the widest bid-ask spread detected', PRICE),
+      ep('/spread', 'Live SOL prices from the top 5 centralized exchanges and top 5 Solana DEXs with the widest bid-ask spread, in gross and estimated net basis points - for arbitrage screening, price discovery and execution checks', PRICE),
       ep('/search/npm', 'Returns a JSON array of npm packages matching the query string', PRICE),
       ep('/search/wikipedia', 'Returns a JSON array of Wikipedia articles matching the query string', PRICE),
       ep('/search/arxiv', 'Returns a JSON array of arXiv papers matching the query string', PRICE),
@@ -1973,9 +1973,9 @@ app.get('/.well-known/x402.json', (req, res) => {
       ep('/search/github', 'Returns a JSON array of GitHub repositories, code, users, or issues matching the query', PRICE),
       ep('/verify/npi', 'Validates a 10-digit NPI number checksum and returns a JSON object with validation result plus CMS NPPES registry enrichment data', VERIFY_PRICE),
       ep('/verify/dea', 'Validates a DEA number format and checksum, returns a JSON object with validation result', PRICE),
-      ep('/scrape', 'Fetches a URL and returns the page content as clean Markdown text in a JSON object', AI_PRICE),
+      ep('/scrape', 'Fetches any public URL and returns the page content as clean Markdown text - for agents that need to read articles, docs and web pages without browser tooling', AI_PRICE),
       ep('/whale-watch', 'Returns a JSON array of recent token swap transactions for a Solana wallet address', ALPHA_PRICE),
-      ep('/solana/audit', 'Returns a JSON object with RugCheck risk score, risk level, and list of specific risk findings for a Solana token', ALPHA_PRICE),
+      ep('/solana/audit', 'Audits a Solana token for rug-pull risk: RugCheck risk score, risk level and the specific risk findings - for agents screening tokens before trading', ALPHA_PRICE),
       ep('/wallet/portfolio', 'Returns a JSON object with native SOL balance and an array of SPL token balances for a Solana wallet', ALPHA_PRICE),
       ep('/scrape/pdf', 'Fetches a PDF from a URL and returns the extracted text as a string in a JSON object, capped at 50,000 characters', AI_PRICE),
     ],
