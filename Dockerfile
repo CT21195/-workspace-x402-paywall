@@ -1,6 +1,6 @@
 FROM node:24-slim
 WORKDIR /app
-COPY package.json package-lock.json* ./
+COPY package.json package-lock.json* .npmrc ./
 RUN npm install --omit=dev --no-audit --no-fund
 COPY server.js ./
 ENV PORT=3402
