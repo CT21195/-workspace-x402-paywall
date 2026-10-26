@@ -1,6 +1,6 @@
 # Spread Paywall API
 
-**178 pay-per-call API endpoints, monetized with x402 v2.** No API keys, no accounts, no signups — callers pay per request in USDC and get JSON back.
+**179 pay-per-call API endpoints, monetized with x402 v2.** No API keys, no accounts, no signups — callers pay per request in USDC and get JSON back.
 
 **Live:** https://workspace-x402-paywall.onrender.com
 **Machine-readable:** [/openapi.json](https://workspace-x402-paywall.onrender.com/openapi.json) · [/llms.txt](https://workspace-x402-paywall.onrender.com/llms.txt) · [/.well-known/x402.json](https://workspace-x402-paywall.onrender.com/.well-known/x402.json)
@@ -158,6 +158,7 @@ Also listed on **RapidAPI** (1 listing, card billing) for buyers who don't use x
 | Endpoint | Price | What it returns |
 |---|---|---|
 | `GET /markets/kalshi` | $0.005 | Returns a JSON array of live Kalshi prediction market events with prices in dollars (implied probability), volume and close times - politics, economics, sports, climate, tech and more |
+| `GET /market/brief` | $0.02 | One-call market brief: BTC/ETH/SOL spot prices with 24h change, the Crypto Fear & Greed index, top trending prediction markets by 24h volume, and the widest verified Kalshi-vs-Polymarket cross-venue gap - replaces four separate calls |
 | `GET /markets/polymarket` | $0.005 | Returns a JSON array of live Polymarket prediction market events with odds and volume |
 | `GET /markets/fear-greed` | $0.005 | Returns the current Crypto Fear and Greed Index value (0-100), its classification and timestamp |
 
