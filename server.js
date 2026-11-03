@@ -2047,10 +2047,12 @@ app.get('/.well-known/x402list.txt', (req, res) => {
   res.type('text/plain').send('x402list-verify-8h4pa8Q_fDcF7HJ2d_jsu6wXpdXF3oLsR3G3VLuv610\n');
 });
 
-// HEAD guard (must sit before the paywall): @x402/express <=2.28.0 does not
-// match HEAD against "GET /route" resources, so a HEAD request skips payment
-// while Express still runs the GET handler — unpaid upstream/API/LLM work.
-// Reject HEAD outright; this API has no HEAD use.
+// HEAD guard (must sit before the paywall): @x402/express <=2.28.0 did not
+// match HEAD against "GET /route" resources, so a HEAD request skipped payment
+// while Express still ran the GET handler — unpaid upstream/API/LLM work.
+// Upstream fixed this in 2.29.0 (PR #3796) and deps are now bumped, but the
+// guard stays — this API has no HEAD use, so rejecting HEAD outright is
+// harmless belt-and-braces. Reject HEAD outright.
 app.use((req, res, next) => {
   if (req.method === 'HEAD') return res.sendStatus(405);
   next();
@@ -2078,14 +2080,15 @@ const SAMPLE_402 = {
 };
 
 // 402 body mirror: @x402/express sends the payment terms ONLY in the
-// PAYMENT-REQUIRED header, with an empty {} body. Some probers and clients
-// (x402dash, body-reading indexers) read the body instead — mirror the
-// decoded header payload into the body so both readers work. The header
-// stays canonical; this only fills an otherwise-empty 402 body.
+// PAYMENT-REQUIRED header — the body is an empty {} (<=2.28.0) or a bare
+// {error} object (2.29.0+), neither of which carries the terms. Some probers
+// and clients (x402dash, body-reading indexers) read the body instead —
+// mirror the decoded header payload into the body so both readers work.
+// The header stays canonical; this only replaces a terms-less 402 body.
 app.use((req, res, next) => {
   const origJson = res.json.bind(res);
   res.json = (body) => {
-    if (res.statusCode === 402 && body && typeof body === 'object' && Object.keys(body).length === 0) {
+    if (res.statusCode === 402 && body && typeof body === 'object' && !Array.isArray(body) && !body.accepts && Object.keys(body).every(k => k === 'error')) {
       const hdr = res.getHeader('payment-required');
       if (hdr) {
         try {
