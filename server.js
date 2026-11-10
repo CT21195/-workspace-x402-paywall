@@ -523,6 +523,7 @@ const MASTER_APIS = [
   // Government
   { path: '/gov/fbi', price: PRICE, tag: 'Government', summary: 'Returns a JSON array of FBI wanted persons with names, charges, and descriptions',
     params: [{ n: 'limit', req: false, d: 'Integer 1-20, number of results to return (default 5)', def: 5 }],
+    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36' },
     url: q => `https://api.fbi.gov/wanted/v1?limit=${num(q.limit, 5, 1, 20)}&sort_on=modified&sort_order=desc`,
     map: d => ({ total: d.total, items: (d.items || []).map(i => ({ title: i.title, subject: (i.subjects || []).join(','), field_office: i.field_offices?.[0] })) }) },
   { path: '/gov/federal-register', price: PRICE, tag: 'Government', summary: 'Returns a JSON array of recent US federal register documents with titles and dates',
@@ -582,12 +583,14 @@ const MASTER_APIS = [
     map: d => ({ answers: (d.Answer || []).map(a => ({ name: a.name, type: a.type, data: a.data })) }) },
   { path: '/dev/crates', price: PRICE, tag: 'Dev', summary: 'Returns a JSON object with metadata, version, and download count for a Rust crate name',
     params: [{ n: 'crate', req: true, d: 'Requires a Rust crate name string, e.g. serde' }],
+    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36' },
     url: q => `https://crates.io/api/v1/crates/${encodeURIComponent(q.crate)}`,
     map: d => ({ name: d.crate?.id, downloads: d.crate?.downloads, version: d.crate?.max_version, description: d.crate?.description }) },
 
   // Reference
   { path: '/ref/define', price: PRICE, tag: 'Reference', summary: 'Returns a JSON array of dictionary definitions for an English word string',
     params: [{ n: 'word', req: true, d: 'Requires an English word string, e.g. hello' }],
+    headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36' },
     url: q => `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(q.word)}`,
     map: d => (Array.isArray(d) ? d : []).slice(0, 1).map(e => ({ word: e.word, phonetic: e.phonetic, meanings: (e.meanings || []).slice(0, 3).map(m => ({ pos: m.partOfSpeech, defs: (m.definitions || []).slice(0, 2).map(x => x.definition) })) })) },
   { path: '/ref/books', price: PRICE, tag: 'Reference', summary: 'Returns a JSON array of books matching the query with titles, authors, and publish years',
