@@ -1,34 +1,55 @@
 # Spread Paywall API
 
-**179 pay-per-call API endpoints, monetized with x402 v2.** No API keys, no accounts, no signups — callers pay per request in USDC and get JSON back.
+**186 pay-per-call API endpoints, monetized with x402 v2 — plus an MPP (Machine Payments Protocol) rail on Tempo.** No API keys, no accounts, no signups — callers pay per request in USDC and get JSON back.
 
 **Live:** https://workspace-x402-paywall.onrender.com
 **Machine-readable:** [/openapi.json](https://workspace-x402-paywall.onrender.com/openapi.json) · [/llms.txt](https://workspace-x402-paywall.onrender.com/llms.txt) · [/.well-known/x402.json](https://workspace-x402-paywall.onrender.com/.well-known/x402.json)
+**Catalog:** listed in the Coinbase x402 Bazaar discovery catalog (all endpoints, including the premium agent tools below).
+**Working example:** [x402-topic-brief-example](https://github.com/CT21195/x402-topic-brief-example) — a complete agent that pays $0.05 for a topic brief, end to end.
 
 ## How it works
 
 Every paid endpoint returns **HTTP 402** with payment terms when called unpaid: x402 v2, `exact` scheme, paid with an EIP-3009 `TransferWithAuthorization` in USDC. A facilitator settles on-chain, so the payer's wallet only signs — **no gas needed**. Pay, retry the same request, get `200` with JSON.
 
+Unpaid responses also carry an **MPP `Payment` challenge**, so MPP clients can pay over Tempo (chainId 4217, pathUSD) to the same recipient instead — two payment rails, one API.
+
 - **Pay on Base:** USDC → `0xD7CDd563e8F6A249B076A702b7e2C233CCF3481d`
 - **Pay on Solana:** USDC → `E21AWkUtLz4BP7AaT82CF7v86Kmv4YzN4NAR1FQnEmqy`
 
-Also listed on **RapidAPI** (1 listing, card billing) for buyers who don't use x402.
+## Built for agents: the premium tools
+
+One call, one answer — no scraping, no multi-source assembly:
+
+| Endpoint | Price | What it does |
+|---|---|---|
+| `GET /brief/full` | $0.05 | Full market bundle: topic brief + market brief + live SOL spread + markets expiring in 48h, in one call |
+| `GET /brief/topic` | $0.05 | One-call topic brief: prediction-market prices on both venues, SEC EDGAR company record, crypto spot price, and short context for a keyword or ticker |
+| `GET /brief/pack` | $0.03 | Mid-tier market pack: topic brief + markets expiring in 48h + live SOL spread, in one call |
+| `GET /market/brief` | $0.02 | One-call market brief: BTC/ETH/SOL spot + 24h change, Fear & Greed index, top trending prediction markets, and the widest verified Kalshi-vs-Polymarket cross-venue gap |
+| `GET /markets/expiring-soon` | $0.01 | Prediction markets closing inside a time window (default 48h) on Polymarket and Kalshi, soonest first, with Yes prices and a near_boundary flag |
+| `GET /portfolio/generate` | $0.05 | Efficient portfolio generator: BTC/ETH/SOL + USDC allocation for a risk level by inverse-volatility weighting within a risk template, from 7d of live Coinbase hourly candles |
+| `GET /portfolio/analyze` | $0.05 | Portfolio analyzer: grades SYMBOL:AMOUNT holdings with live values and weights (Coinbase crypto, Yahoo/Nasdaq US stocks), stable/crypto/stock split, and concentration + volatility flags |
+| `GET /trade/analyze` | $0.03 | Mechanical trade analysis for bots: 24h range position, trend %/day, OU mean-reversion half-life, 4h momentum, support/resistance and a rule-based verdict for any Coinbase USD pair |
+
+The headline product is the **spread data**: live SOL prices across the top 5 centralized exchanges and top 5 Solana DEXs with the widest gap (`GET /spread`, $0.005), and title-matched Kalshi vs Polymarket prices with the cross-venue gap in points and basis points (`GET /predict/spread`, $0.005). Solana token rug-risk audits (`GET /solana/audit`, $0.05) round out the alpha tier.
 
 ## Pricing
 
-| Tier | Price (USDC) | Covers |
-|---|---|---|
-| Utility | $0.001 | UUIDs, hashing, base64, IP/time, block height, slot, converters, format validators |
-| Chain reads | $0.003 | ETH / SOL / ERC-20 / SPL balances |
-| Standard | $0.005 | Spreads, search, market data, Kalshi + Polymarket prediction markets, sports scores & betting odds, stocks, reference data, most validators |
-| AI | $0.01 | Web scraping, PDF extraction, LLM Q&A, image generation, email/pwned checks |
-| Alpha | $0.05 | Whale watching, RugCheck token audits, wallet portfolios |
+| Tier | Price (USDC) | Count | Covers |
+|---|---|---|---|
+| Utility | $0.001 | 49 | UUIDs, hashing, base64, IP/time, block height, slot, converters, format validators |
+| Chain reads | $0.003 | 4 | ETH / SOL / ERC-20 / SPL balances |
+| Standard | $0.005 | 116 | Spreads, search, market data, Kalshi + Polymarket prediction markets, sports scores & odds, stocks, reference data |
+| AI / verification | $0.01 | 6 | LLM Q&A, image generation, NPI validation, email/pwned checks |
+| Market briefs | $0.015–$0.02 | 2 | Markets expiring soon, one-call market brief |
+| Agent tools | $0.025 | 2 | Brief pack bundle, mechanical trade analysis |
+| Premium | $0.05 | 7 | Full brief bundle, topic briefs, portfolio generate/analyze, Solana token audits, whale watching |
 
 ## Endpoints
 
 ### AI (3)
 
-| Endpoint | Price | What it returns |
+| Endpoint | Price | Description |
 |---|---|---|
 | `GET /ai/ask` | $0.005 | Ask an LLM anything: sends a text prompt and returns the generated answer as text - general-purpose inference (reasoning, drafting, summarization, Q&A) for agents without their own model key |
 | `GET /ai/image` | $0.01 | Generates a 1024x1024 image from a text description and returns a ready-to-use image URL - illustrations, thumbnails and visual assets on demand |
@@ -36,14 +57,14 @@ Also listed on **RapidAPI** (1 listing, card billing) for buyers who don't use x
 
 ### AI Data (2)
 
-| Endpoint | Price | What it returns |
+| Endpoint | Price | Description |
 |---|---|---|
 | `GET /scrape` | $0.01 | Fetches any public URL and returns the page content as clean Markdown text - for agents that need to read articles, docs and web pages without browser tooling |
 | `GET /scrape/pdf` | $0.01 | Fetches a PDF from a URL and returns the extracted text as a string in a JSON object, capped at 50,000 characters |
 
 ### Chain Data (6)
 
-| Endpoint | Price | What it returns |
+| Endpoint | Price | Description |
 |---|---|---|
 | `GET /chain/balance` | $0.003 | Returns a JSON object with the native ETH balance of a Base address |
 | `GET /chain/block-number` | $0.001 | Returns a JSON object with the current Base block number |
@@ -52,36 +73,37 @@ Also listed on **RapidAPI** (1 listing, card billing) for buyers who don't use x
 | `GET /chain/sol-balance` | $0.003 | Returns a JSON object with the native SOL balance of a Solana wallet |
 | `GET /chain/spl-balance` | $0.003 | Returns a JSON object with SPL token balances for a Solana wallet and mint |
 
-### Crypto (6)
+### Crypto (7)
 
-| Endpoint | Price | What it returns |
+| Endpoint | Price | Description |
 |---|---|---|
 | `GET /btc/fees` | $0.005 | Returns a JSON object with current Bitcoin network fee estimates in satoshis per vByte |
 | `GET /crypto/ohlcv` | $0.005 | Returns a JSON array of OHLCV candlestick data for a cryptocurrency symbol |
 | `GET /crypto/prices` | $0.005 | Returns a JSON array of top cryptocurrencies by market cap with USD prices |
 | `GET /solana/audit` | $0.05 | Audits a Solana token for rug-pull risk: RugCheck risk score, risk level and the specific risk findings - for agents screening tokens before trading |
+| `GET /solana/token-holders` | $0.005 | Returns the top 20 holders of a Solana token mint with percent of supply each, plus top-10 and top-20 concentration percentages |
 | `GET /wallet/portfolio` | $0.05 | Returns a JSON object with native SOL balance and an array of SPL token balances for a Solana wallet |
 | `GET /whale-watch` | $0.05 | Returns a JSON array of recent token swap transactions for a Solana wallet address |
 
 ### Data (2)
 
-| Endpoint | Price | What it returns |
+| Endpoint | Price | Description |
 |---|---|---|
 | `GET /spread` | $0.005 | Live SOL prices from the top 5 centralized exchanges and top 5 Solana DEXs with the widest bid-ask spread, in gross and estimated net basis points - for arbitrage screening, price discovery and execution checks |
-| `GET /spread/base` | $0.005 | Returns a JSON object with live cross-DEX spreads on Base for a token (default WETH), plus the widest spread detected |
+| `GET /spread/base` | $0.005 | Returns a JSON object with live cross-DEX spreads on Base for a token (default WETH): prices from the top 5 Base DEXs plus the widest spread detected |
 
 ### DeFi (4)
 
-| Endpoint | Price | What it returns |
+| Endpoint | Price | Description |
 |---|---|---|
+| `GET /defi/protocols` | $0.005 | Returns a JSON array of the top DeFi protocols by total value locked (TVL) with 1-day and 7-day TVL change percentages and category |
+| `GET /defi/stablecoins` | $0.005 | Returns a JSON array of the top stablecoins by circulating supply with live price and peg type - for peg-deviation and stablecoin market monitoring |
 | `GET /defi/tvl` | $0.005 | Returns a JSON array of total value locked figures across 468 blockchain chains |
 | `GET /defi/yields` | $0.005 | Returns a JSON array of top DeFi yield pools sorted by APY percentage |
-| `GET /defi/stablecoins` | $0.005 | Returns the top stablecoins by circulating supply with live price and peg type |
-| `GET /defi/protocols` | $0.005 | Returns the top DeFi protocols by total value locked (TVL) with 1-day and 7-day change percentages |
 
 ### Dev (3)
 
-| Endpoint | Price | What it returns |
+| Endpoint | Price | Description |
 |---|---|---|
 | `GET /dev/crates` | $0.005 | Returns a JSON object with metadata, version, and download count for a Rust crate name |
 | `GET /dev/dns` | $0.005 | Returns a JSON object with DNS records for a domain name string via Google DNS-over-HTTPS |
@@ -89,27 +111,27 @@ Also listed on **RapidAPI** (1 listing, card billing) for buyers who don't use x
 
 ### FX (2)
 
-| Endpoint | Price | What it returns |
+| Endpoint | Price | Description |
 |---|---|---|
 | `GET /fx/convert` | $0.005 | Converts a numeric amount between two ISO currency codes and returns a JSON object with the converted value |
 | `GET /fx/rates` | $0.005 | Returns a JSON object with current European Central Bank foreign exchange rates |
 
 ### Finance (2)
 
-| Endpoint | Price | What it returns |
+| Endpoint | Price | Description |
 |---|---|---|
+| `GET /edgar/company` | $0.005 | Returns a JSON object resolving a US stock ticker to its SEC EDGAR company record: CIK number, legal company name and the EDGAR submissions URL for filings |
 | `GET /finance/tickers` | $0.005 | Returns a JSON array of all US public company ticker symbols with CIK numbers |
-| `GET /edgar/company` | $0.005 | Resolves a US stock ticker to its SEC EDGAR company record: CIK number, legal name and submissions URL |
 
 ### Food (1)
 
-| Endpoint | Price | What it returns |
+| Endpoint | Price | Description |
 |---|---|---|
 | `GET /food/search` | $0.005 | Returns a JSON object with nutritional data (calories, macros) for a food name string |
 
 ### Fun (11)
 
-| Endpoint | Price | What it returns |
+| Endpoint | Price | Description |
 |---|---|---|
 | `GET /fun/advice` | $0.005 | Returns a JSON object with a random piece of advice |
 | `GET /fun/anime` | $0.005 | Returns a JSON array of anime titles matching the query with scores and episode counts |
@@ -125,7 +147,7 @@ Also listed on **RapidAPI** (1 listing, card billing) for buyers who don't use x
 
 ### Geo (4)
 
-| Endpoint | Price | What it returns |
+| Endpoint | Price | Description |
 |---|---|---|
 | `GET /geo/elevation` | $0.005 | Returns a JSON object with elevation in meters for latitude/longitude coordinates |
 | `GET /geo/ip` | $0.005 | Returns a JSON object with city, country, latitude, and longitude for an IPv4 or IPv6 address string |
@@ -134,7 +156,7 @@ Also listed on **RapidAPI** (1 listing, card billing) for buyers who don't use x
 
 ### Government (3)
 
-| Endpoint | Price | What it returns |
+| Endpoint | Price | Description |
 |---|---|---|
 | `GET /gov/datasets` | $0.005 | Returns a JSON array of US government datasets matching the query string |
 | `GET /gov/fbi` | $0.005 | Returns a JSON array of FBI wanted persons with names, charges, and descriptions |
@@ -142,46 +164,58 @@ Also listed on **RapidAPI** (1 listing, card billing) for buyers who don't use x
 
 ### Health (2)
 
-| Endpoint | Price | What it returns |
+| Endpoint | Price | Description |
 |---|---|---|
 | `GET /health/gene` | $0.005 | Returns a JSON object with gene annotations and identifiers for a gene symbol string |
 | `GET /health/trials` | $0.005 | Returns a JSON array of clinical trials matching the query with phase, status, and conditions |
 
 ### Jobs (1)
 
-| Endpoint | Price | What it returns |
+| Endpoint | Price | Description |
 |---|---|---|
 | `GET /jobs/remote` | $0.005 | Returns a JSON array of remote job listings with titles, companies, and locations |
 
-### Markets (3)
+### Markets (11)
 
-| Endpoint | Price | What it returns |
+| Endpoint | Price | Description |
 |---|---|---|
+| `GET /brief/full` | $0.05 | Full market bundle: topic brief + market brief + live SOL spread + markets expiring in 48h, in one call |
+| `GET /brief/pack` | $0.03 | Mid-tier market pack: topic brief + markets expiring in 48h + live SOL spread, in one call |
+| `GET /brief/topic` | $0.05 | One-call topic brief: prediction-market prices on both venues, SEC EDGAR company record, crypto spot price, and short context for a keyword or ticker |
+| `GET /market/brief` | $0.02 | One-call market brief: BTC/ETH/SOL spot + 24h change, Fear & Greed index, top trending prediction markets, and the widest verified Kalshi-vs-Polymarket cross-venue gap |
+| `GET /markets/expiring-soon` | $0.01 | Prediction markets closing inside a time window (default 48h) on Polymarket and Kalshi, soonest first, with Yes prices and a near_boundary flag |
+| `GET /markets/fear-greed` | $0.005 | Returns a JSON object with the current Crypto Fear and Greed Index value (0-100), its classification (Extreme Fear to Extreme Greed) and the reading timestamp |
 | `GET /markets/kalshi` | $0.005 | Returns a JSON array of live Kalshi prediction market events with prices in dollars (implied probability), volume and close times - politics, economics, sports, climate, tech and more |
-| `GET /market/brief` | $0.02 | One-call market brief: BTC/ETH/SOL spot prices with 24h change, the Crypto Fear & Greed index, top trending prediction markets by 24h volume, and the widest verified Kalshi-vs-Polymarket cross-venue gap - replaces four separate calls |
 | `GET /markets/polymarket` | $0.005 | Returns a JSON array of live Polymarket prediction market events with odds and volume |
-| `GET /markets/fear-greed` | $0.005 | Returns the current Crypto Fear and Greed Index value (0-100), its classification and timestamp |
+| `GET /portfolio/analyze` | $0.05 | Portfolio analyzer: grades SYMBOL:AMOUNT holdings with live values and weights (Coinbase crypto, Yahoo/Nasdaq US stocks), stable/crypto/stock split, and concentration + volatility flags |
+| `GET /portfolio/generate` | $0.05 | Efficient portfolio generator: BTC/ETH/SOL + USDC allocation for a risk level by inverse-volatility weighting within a risk template, from 7d of live Coinbase hourly candles |
+| `GET /trade/analyze` | $0.03 | Mechanical trade analysis for bots: 24h range position, trend %/day, OU mean-reversion half-life, 4h momentum, support/resistance and a rule-based verdict for any Coinbase USD pair |
 
 ### Meme Data (3)
 
-| Endpoint | Price | What it returns |
+| Endpoint | Price | Description |
 |---|---|---|
 | `GET /meme/new` | $0.005 | Returns a JSON array of newly launched meme tokens on the specified chain or all chains |
 | `GET /meme/token` | $0.005 | Returns a JSON object with price, volume, and liquidity data for a token contract address |
 | `GET /meme/trending` | $0.005 | Returns a JSON array of trending meme coin liquidity pools on the specified chain |
 
-### Politics (4)
+### Politics (9)
 
-| Endpoint | Price | What it returns |
+| Endpoint | Price | Description |
 |---|---|---|
-| `GET /politics/headlines` | $0.005 | Returns a JSON array of today's top global news stories (Wikipedia In the News) with article topics for each story |
-| `GET /politics/kalshi` | $0.005 | Returns a JSON array of Kalshi politics market events with prices in dollars (implied probability) and volume (default series KXFEDEND, or pass any politics series ticker) |
+| `GET /kalshi/elections` | $0.005 | Returns Kalshi US election market events: the 2028 presidential party-winner series and the House-majority series, with prices in dollars (implied probability) and volume |
+| `GET /politics/headlines` | $0.005 | Returns a JSON array of today's top global news stories (Wikipedia In the News - politics, conflicts, elections, diplomacy) with the article topics for each story |
+| `GET /politics/kalshi` | $0.005 | Returns a JSON array of Kalshi politics market events with prices in dollars (implied probability) and volume - default series is KXFEDEND (Will Trump end the Federal Reserve); pass any politics series ticker (2,000+ exist, e.g. KXPARTYLEAVE, KXELECTIONBILL) |
 | `GET /politics/markets` | $0.005 | Returns a JSON array of live Polymarket politics events (US and global) with odds and volume |
-| `GET /politics/polymarket` | $0.005 | Returns a JSON array of live Polymarket politics events (US and global) with odds and volume - mirrors /politics/kalshi |
+| `GET /politics/polymarket` | $0.005 | Returns a JSON array of live Polymarket politics events (US and global) with odds and volume - same data as /politics/markets, named to mirror /politics/kalshi |
+| `GET /polymarket/elections` | $0.005 | Returns live Polymarket US election events (elections, 2026 midterms, House races) deduplicated across tags and sorted by volume, with odds per market |
+| `GET /predict/search` | $0.005 | Searches live prediction markets on both Polymarket and Kalshi by keyword and returns matching events with odds from both venues in one call |
+| `GET /predict/spread` | $0.005 | Returns title-matched Kalshi vs Polymarket prices on the same political questions with the cross-venue price gap in percentage points and basis points - prediction-market arbitrage screening |
+| `GET /predict/trending` | $0.005 | Returns the trending prediction markets right now: top Polymarket events by 24h volume plus headline Kalshi election and Fed series, labeled by venue |
 
 ### Pump.fun (4)
 
-| Endpoint | Price | What it returns |
+| Endpoint | Price | Description |
 |---|---|---|
 | `GET /pump/chains` | $0.005 | Returns a JSON array of 100+ supported blockchain chain identifiers for meme token endpoints |
 | `GET /pump/migrating` | $0.005 | Returns a JSON array of pump.fun tokens approaching Raydium migration threshold, sorted by migration progress percentage |
@@ -190,23 +224,23 @@ Also listed on **RapidAPI** (1 listing, card billing) for buyers who don't use x
 
 ### Reference (4)
 
-| Endpoint | Price | What it returns |
+| Endpoint | Price | Description |
 |---|---|---|
 | `GET /ref/books` | $0.005 | Returns a JSON array of books matching the query with titles, authors, and publish years |
-| `GET /ref/countries` | $0.005 | Returns country profiles from the World Bank: name, capital, region, income level and coordinates for one country by ISO code or every country |
+| `GET /ref/countries` | $0.005 | Returns country profiles from the World Bank: name, capital, region, income level and coordinates for one country by ISO code (e.g. US, DE, JP) or code=all for every country |
 | `GET /ref/define` | $0.005 | Returns a JSON array of dictionary definitions for an English word string |
 | `GET /ref/holidays` | $0.005 | Returns a JSON array of public holidays for an ISO country code and year integer |
 
 ### Science (2)
 
-| Endpoint | Price | What it returns |
+| Endpoint | Price | Description |
 |---|---|---|
 | `GET /science/papers` | $0.005 | Returns a JSON array of scholarly papers matching the query with titles, authors, and DOIs |
 | `GET /science/quakes` | $0.005 | Returns a JSON array of recent earthquakes with magnitude, location, and timestamp from USGS |
 
 ### Search (9)
 
-| Endpoint | Price | What it returns |
+| Endpoint | Price | Description |
 |---|---|---|
 | `GET /lookup/pypi` | $0.005 | Returns a JSON object with metadata for a PyPI package name |
 | `GET /search/arxiv` | $0.005 | Returns a JSON array of arXiv papers matching the query string |
@@ -220,58 +254,57 @@ Also listed on **RapidAPI** (1 listing, card billing) for buyers who don't use x
 
 ### Social (1)
 
-| Endpoint | Price | What it returns |
+| Endpoint | Price | Description |
 |---|---|---|
 | `GET /social/bluesky` | $0.005 | Returns a JSON array of Bluesky social users matching the query with handles and bios |
 
-### Solana (2)
+### Solana (1)
 
-| Endpoint | Price | What it returns |
+| Endpoint | Price | Description |
 |---|---|---|
 | `GET /solana/top100` | $0.005 | Returns a JSON array of the top 100 Solana tokens by market cap with prices in USD and SOL |
-| `GET /solana/token-holders` | $0.005 | Returns the top 20 holders of a Solana token mint with percent of supply each, plus top-10 and top-20 concentration percentages |
 
 ### Space (2)
 
-| Endpoint | Price | What it returns |
+| Endpoint | Price | Description |
 |---|---|---|
 | `GET /space/iss` | $0.005 | Returns a JSON object with the current latitude and longitude of the International Space Station |
 | `GET /space/spacex` | $0.005 | Returns a JSON object with details of the most recent SpaceX launch |
 
 ### Sports (7)
 
-| Endpoint | Price | What it returns |
+| Endpoint | Price | Description |
 |---|---|---|
 | `GET /sports/football` | $0.005 | Returns a JSON array of German Bundesliga football matches with scores and dates |
 | `GET /sports/kalshi` | $0.005 | Returns a JSON array of Kalshi game-winner markets for a league (NHL, NBA, NFL, MLB, FIFA World Cup) with live bid/ask/last prices in dollars = implied win probability for each team |
-| `GET /sports/polymarket` | $0.005 | Returns a JSON array of Polymarket sports markets for a league (NHL, NBA, NFL, MLB, EPL, soccer) with odds - mirrors /sports/kalshi |
 | `GET /sports/nhl` | $0.005 | Returns a JSON array of NHL team standings with wins, losses, and points |
+| `GET /sports/polymarket` | $0.005 | Returns a JSON array of Polymarket sports markets for a league (NHL, NBA, NFL, MLB, EPL, soccer) - futures and game markets with odds, mirroring /sports/kalshi on the other venue |
 | `GET /sports/scores` | $0.005 | Returns a JSON array of games for a league (NHL, NBA, NFL, MLB, FIFA World Cup, EPL, FIFA qualifiers) with live scores, status/clock and betting odds (spread, over/under, details, provider) when available |
-| `GET /sports/ufc` | $0.005 | Returns UFC events from the ESPN MMA scoreboard with status and the fight card (both fighters per bout, odds summary when available) |
-| `GET /sports/ufc-odds` | $0.005 | Returns live Polymarket UFC markets with current Yes/No prices per outcome |
+| `GET /sports/ufc` | $0.005 | Returns a JSON array of UFC events from the ESPN MMA scoreboard with status and the fight card: each bout with both fighters and the odds summary when ESPN carries one |
+| `GET /sports/ufc-odds` | $0.005 | Returns a JSON array of live Polymarket UFC markets (fight winner markets and UFC futures) with current Yes/No prices per outcome |
 
 ### Stocks (2)
 
-| Endpoint | Price | What it returns |
+| Endpoint | Price | Description |
 |---|---|---|
 | `GET /stocks/list` | $0.005 | Returns a JSON array of tokenized stocks with live prices |
 | `GET /stocks/price` | $0.005 | Returns a JSON object with live price quote for a tokenized stock symbol |
 
 ### Utilities (18)
 
-| Endpoint | Price | What it returns |
+| Endpoint | Price | Description |
 |---|---|---|
 | `GET /ping` | $0.001 | Health check endpoint for x402 payment flow testing: returns a JSON object with service status and the current server timestamp |
 | `GET /utils/base64` | $0.001 | Encodes text to base64 or decodes base64 to text, returns a JSON object with the result string |
 | `GET /utils/cron-explain` | $0.001 | Explains a 5-field cron expression field by field in plain language |
-| `GET /utils/csv2json` | $0.001 | Converts CSV to a JSON array of objects |
+| `GET /utils/csv2json` | $0.001 | Converts CSV text to a JSON array of objects - for agents that need tabular data as structured JSON |
 | `GET /utils/hash` | $0.001 | Computes a cryptographic hash of input text, returns a JSON object with the hex digest string |
 | `GET /utils/html2md` | $0.001 | Converts HTML to Markdown-ish plain text |
 | `GET /utils/ip` | $0.001 | Returns a JSON object with the caller IP address as a string |
 | `GET /utils/json-validate` | $0.001 | Validates JSON syntax and optionally checks it against a JSON Schema subset |
-| `GET /utils/json2csv` | $0.001 | Converts a JSON array of objects to CSV |
+| `GET /utils/json2csv` | $0.001 | Converts a JSON array of objects to CSV text |
 | `GET /utils/jwt-decode` | $0.001 | Decodes a JWT header and payload (signature not verified) |
-| `GET /utils/md2html` | $0.001 | Converts Markdown to HTML |
+| `GET /utils/md2html` | $0.001 | Converts Markdown text to HTML |
 | `GET /utils/password-generator` | $0.001 | Generates a cryptographically random password |
 | `GET /utils/qr` | $0.001 | Builds a QR-code image URL for the given text (free provider, properly encoded) |
 | `GET /utils/text-diff` | $0.001 | Line-based diff of two texts with added/removed counts and hunks |
@@ -282,7 +315,7 @@ Also listed on **RapidAPI** (1 listing, card billing) for buyers who don't use x
 
 ### Verification (59)
 
-| Endpoint | Price | What it returns |
+| Endpoint | Price | Description |
 |---|---|---|
 | `GET /verify/address/btc` | $0.001 | Validates Bitcoin P2PKH/P2SH/bech32 addresses |
 | `GET /verify/address/evm` | $0.001 | Validates an EVM address and its EIP-55 checksum |
@@ -308,10 +341,10 @@ Also listed on **RapidAPI** (1 listing, card billing) for buyers who don't use x
 | `GET /verify/hash/md5` | $0.001 | Validates a 32-char MD5 hex digest format |
 | `GET /verify/hash/sha256` | $0.001 | Validates a 64-char SHA-256 hex digest format |
 | `GET /verify/iban` | $0.005 | Validates an IBAN checksum (ISO 13616 mod-97) and parses country/bank codes |
-| `GET /verify/imei` | $0.005 | Validates a device IMEI Luhn checksum |
+| `GET /verify/imei` | $0.005 | Validates a device IMEI number against the Luhn checksum and reports the TAC prefix |
 | `GET /verify/ipv4` | $0.001 | Validates IPv4 format and classifies the address range |
 | `GET /verify/ipv6` | $0.001 | Validates IPv6 format and classifies the address range |
-| `GET /verify/isbn` | $0.005 | Validates ISBN-10/ISBN-13 checksums |
+| `GET /verify/isbn` | $0.005 | Validates ISBN-10 and ISBN-13 checksums and reports the detected format |
 | `GET /verify/isin` | $0.005 | Validates an ISIN securities identifier checksum |
 | `GET /verify/issn` | $0.001 | Validates an ISSN check digit (ISO 3297) |
 | `GET /verify/json` | $0.001 | Strictly validates JSON and pinpoints syntax errors |
@@ -329,13 +362,13 @@ Also listed on **RapidAPI** (1 listing, card billing) for buyers who don't use x
 | `GET /verify/routing` | $0.005 | Validates a US bank routing number (ABA) checksum |
 | `GET /verify/sedol` | $0.005 | Validates a SEDOL (UK securities) checksum |
 | `GET /verify/semver` | $0.001 | Validates Semantic Versioning 2.0.0 format |
-| `GET /verify/sin` | $0.005 | Validates a Canadian SIN Luhn checksum |
+| `GET /verify/sin` | $0.005 | Validates a Canadian Social Insurance Number against the Luhn checksum |
 | `GET /verify/ssh-key` | $0.001 | Validates an OpenSSH public key structure and reports algorithm/bit length (key is never echoed) |
 | `GET /verify/ssl` | $0.005 | Fetches a domain TLS certificate and reports validity window and expiry |
 | `GET /verify/ssn` | $0.005 | Validates a US SSN format against impossible SSA combinations (format only) |
 | `GET /verify/swift` | $0.005 | Validates a SWIFT/BIC code structure and parses bank/country/branch |
 | `GET /verify/ulid` | $0.001 | Validates ULID format and extracts its timestamp |
-| `GET /verify/upc` | $0.005 | Validates UPC-A/UPC-E barcode checksums |
+| `GET /verify/upc` | $0.005 | Validates UPC-A and UPC-E barcode checksums |
 | `GET /verify/upi` | $0.005 | Validates a UPI ID format (India, handle@bank) |
 | `GET /verify/ups` | $0.005 | Validates a UPS tracking number (1Z) check digit |
 | `GET /verify/url-malicious` | $0.001 | Checks a URL/host against the URLhaus malware feed: clean, malicious, or unknown |
@@ -344,19 +377,9 @@ Also listed on **RapidAPI** (1 listing, card billing) for buyers who don't use x
 | `GET /verify/vat` | $0.005 | Validates an EU/GB VAT number format per country rules |
 | `GET /verify/vin` | $0.005 | Validates a VIN check digit and decodes year/plant |
 
-### Predict (5)
-
-| Endpoint | Price | Description |
-|---|---|---|
-| `GET /predict/spread` | $0.005 | Returns title-matched Kalshi vs Polymarket prices on the same political questions with the cross-venue price gap in percentage points and basis points - prediction-market arbitrage screening |
-| `GET /predict/trending` | $0.005 | Returns the trending prediction markets right now: top Polymarket events by 24h volume plus headline Kalshi election and Fed series, labeled by venue |
-| `GET /predict/search` | $0.005 | Searches live prediction markets on both Polymarket and Kalshi by keyword and returns matching events with odds from both venues in one call |
-| `GET /kalshi/elections` | $0.005 | Returns Kalshi US election market events: the 2028 presidential party-winner series and the House-majority series, with prices in dollars (implied probability) and volume |
-| `GET /polymarket/elections` | $0.005 | Returns live Polymarket US election events (elections, 2026 midterms, House races) deduplicated across tags and sorted by volume, with odds per market |
-
 ### Weather (1)
 
-| Endpoint | Price | What it returns |
+| Endpoint | Price | Description |
 |---|---|---|
 | `GET /weather/current` | $0.005 | Returns a JSON object with current weather conditions and forecast for a location |
 

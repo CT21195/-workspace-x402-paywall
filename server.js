@@ -2169,7 +2169,7 @@ app.get('/llms.txt', (req, res) => {
 });
 
 app.get('/.well-known/x402list.txt', (req, res) => {
-  res.type('text/plain').send('x402list-verify-8h4pa8Q_fDcF7HJ2d_jsu6wXpdXF3oLsR3G3VLuv610\n');
+  res.type('text/plain').send('x402list-verify-V3aaOq-F1g8rfIc-ORXv9463Ml8vZzADc4i6LeBYLEc\n');
 });
 
 // HEAD guard (must sit before the paywall): @x402/express <=2.28.0 did not
