@@ -459,7 +459,7 @@ const MASTER_APIS = [
     params: [{ n: 'limit', req: false, d: 'Integer 1-50, number of results to return (default 10)', def: 10 }],
     url: q => `https://api.coinlore.net/api/tickers/?start=0&limit=${num(q.limit, 10, 1, 50)}`,
     map: d => (d.data || []).map(c => ({ symbol: c.symbol, name: c.name, price_usd: c.price_usd, change_24h: c.percent_change_24h, market_cap: c.market_cap_usd, volume_24h: c.volume24 })) },
-  { path: '/crypto/ohlcv', price: PRICE, tag: 'Crypto', summary: 'Returns a JSON array of OHLCV candlestick data for a cryptocurrency symbol',
+  { path: '/crypto/ohlcv', price: PRICE, tag: 'Crypto', summary: 'Returns the latest OHLCV candles (open, high, low, close, volume) for a crypto coin such as btc-bitcoin - price history for charting, backtests and momentum checks without a market-data subscription',
     params: [{ n: 'coin', req: true, d: 'Requires a coin ID string in format slug-symbol, e.g. btc-bitcoin' }],
     url: q => `https://api.coinpaprika.com/v1/coins/${encodeURIComponent(q.coin)}/ohlcv/latest/`,
     map: d => (Array.isArray(d) ? d : [d]).slice(0, 5).map(c => ({ time: c.time_open, open: c.open, high: c.high, low: c.low, close: c.close, volume: c.volume })) },
@@ -479,11 +479,11 @@ const MASTER_APIS = [
     map: (d, q) => (d.data || []).filter(p => p.apy > 0).sort((a, b) => b.apy - a.apy).slice(0, num(q.limit, 10, 1, 20)).map(p => ({ project: p.project, chain: p.chain, symbol: p.symbol, apy: +p.apy.toFixed(2), tvl: Math.round(p.tvlUsd || 0) })) },
 
   // FX
-  { path: '/fx/rates', price: PRICE, tag: 'FX', summary: 'Returns a JSON object with current European Central Bank foreign exchange rates',
+  { path: '/fx/rates', price: PRICE, tag: 'FX', summary: 'Returns current European Central Bank reference FX rates for a base currency (default USD), optionally filtered to specific symbols - currency tables for pricing, accounting and travel agents',
     params: [{ n: 'base', req: false, d: 'Requires a 3-letter ISO currency code string (default USD)', def: 'USD' }, { n: 'symbols', req: false, d: 'Requires a comma-separated string of 3-letter ISO currency codes, e.g. EUR,GBP,JPY' }],
     url: q => `https://api.frankfurter.dev/v1/latest?base=${encodeURIComponent(q.base || 'USD')}${q.symbols ? `&symbols=${encodeURIComponent(q.symbols)}` : ''}`,
     map: d => ({ base: d.base, date: d.date, rates: d.rates }) },
-  { path: '/fx/convert', price: PRICE, tag: 'FX', summary: 'Converts a numeric amount between two ISO currency codes and returns a JSON object with the converted value',
+  { path: '/fx/convert', price: PRICE, tag: 'FX', summary: 'Converts an amount between any two ISO currency codes at the current rate and returns the rate used plus the converted result - one-call currency math for commerce and travel agents',
     params: [{ n: 'from', req: true, d: 'Requires a 3-letter ISO currency code string, e.g. EUR' }, { n: 'to', req: true, d: 'Requires a 3-letter ISO currency code string, e.g. USD' }, { n: 'amount', req: false, d: 'Requires a positive numeric amount (default 1)', def: 1 }],
     url: q => `https://cdn.jsdelivr.net/npm/@fawazahmed0/currency-api@latest/v1/currencies/${encodeURIComponent((q.from || 'eur').toLowerCase())}.json`,
     map: (d, q) => {
@@ -507,7 +507,7 @@ const MASTER_APIS = [
     params: [{ n: 'ip', req: true, d: 'Requires an IPv4 or IPv6 address string, e.g. 8.8.8.8' }],
     url: q => `http://ip-api.com/json/${encodeURIComponent(q.ip)}?fields=status,country,countryCode,city,lat,lon,isp,org`,
     map: d => d.status === 'success' ? { country: d.country, code: d.countryCode, city: d.city, lat: d.lat, lon: d.lon, isp: d.isp, org: d.org } : { error: 'lookup failed' } },
-  { path: '/geo/zip', price: PRICE, tag: 'Geo', summary: 'Returns a JSON object with city name, latitude, and longitude for a postal code string',
+  { path: '/geo/zip', price: PRICE, tag: 'Geo', summary: 'Resolves a postal code plus country to its place(s): name, state and latitude/longitude for each - address normalization and location lookup for logistics and commerce agents',
     params: [{ n: 'country', req: true, d: 'Requires a 2-letter ISO country code string, e.g. us' }, { n: 'code', req: true, d: 'Requires a postal code string, e.g. 90210' }],
     url: q => `https://api.zippopotam.us/${encodeURIComponent(q.country)}/${encodeURIComponent(q.code)}`,
     map: d => ({ country: d.country, places: (d.places || []).map(p => ({ name: p['place name'], state: p.state, lat: p.latitude, lon: p.longitude })) }) },
@@ -515,7 +515,7 @@ const MASTER_APIS = [
     params: [{ n: 'lat', req: true, d: 'Requires a decimal latitude float between -90 and 90' }, { n: 'lon', req: true, d: 'Requires a decimal longitude float between -180 and 180' }],
     url: q => `https://api.sunrise-sunset.org/json?lat=${encodeURIComponent(q.lat)}&lng=${encodeURIComponent(q.lon)}&formatted=0`,
     map: d => d.results || {} },
-  { path: '/geo/elevation', price: PRICE, tag: 'Geo', summary: 'Returns a JSON object with elevation in meters for latitude/longitude coordinates',
+  { path: '/geo/elevation', price: PRICE, tag: 'Geo', summary: 'Returns the ground elevation in meters for any latitude/longitude point - terrain context for mapping, routing, hiking and site-planning agents',
     params: [{ n: 'lat', req: true, d: 'Requires a decimal latitude float between -90 and 90' }, { n: 'lon', req: true, d: 'Requires a decimal longitude float between -180 and 180' }],
     url: q => `https://api.opentopodata.org/v1/test-dataset?locations=${encodeURIComponent(q.lat)},${encodeURIComponent(q.lon)}`,
     map: d => ({ elevation_m: d.results?.[0]?.elevation ?? null }) },
@@ -594,7 +594,7 @@ const MASTER_APIS = [
     params: [{ n: 'q', req: true, d: 'Requires a text search query string' }],
     url: q => `https://openlibrary.org/search.json?q=${encodeURIComponent(q.q)}&limit=5`,
     map: d => (d.docs || []).map(b => ({ title: b.title, author: (b.author_name || [])[0], year: b.first_publish_year })) },
-  { path: '/ref/holidays', price: PRICE, tag: 'Reference', summary: 'Returns a JSON array of public holidays for an ISO country code and year integer',
+  { path: '/ref/holidays', price: PRICE, tag: 'Reference', summary: 'Returns the public holidays for a country and year with date plus English and local names - business-day, scheduling and payroll logic without maintaining holiday tables',
     params: [{ n: 'country', req: true, d: 'Requires a 2-letter ISO country code string, e.g. US' }, { n: 'year', req: false, d: 'Requires a 4-digit year integer (default 2026)', def: 2026 }],
     url: q => `https://date.nager.at/api/v3/publicholidays/${num(q.year, 2026, 2000, 2030)}/${encodeURIComponent(q.country)}`,
     map: d => (Array.isArray(d) ? d : []).map(h => ({ date: h.date, name: h.name, local: h.localName })) },
@@ -630,7 +630,7 @@ const MASTER_APIS = [
     map: d => (d.actors || []).map(a => ({ handle: a.handle, name: a.displayName, followers: a.followersCount })) },
 
   // Food & jobs
-  { path: '/food/search', price: PRICE, tag: 'Food', summary: 'Returns a JSON object with nutritional data (calories, macros) for a food name string',
+  { path: '/food/search', price: PRICE, tag: 'Food', summary: 'Searches the Open Food Facts product database by name and returns matching packaged foods with brand and Nutri-Score grade - product lookup for grocery, nutrition and shopping agents',
     params: [{ n: 'q', req: true, d: 'Requires a food name text string' }],
     url: q => `https://world.openfoodfacts.org/cgi/search.pl?search_terms=${encodeURIComponent(q.q)}&search_simple=1&action=process&json=1&page_size=5`,
     map: d => (d.products || []).map(p => ({ name: p.product_name, brand: p.brands, nutriscore: p.nutriscore_grade })) },
@@ -2112,7 +2112,7 @@ function shieldBlock(res, retryAfterSec, kind) {
 app.use((req, res, next) => {
   if (req.method !== 'GET') return next();
   const path = req.path;
-  if (path === '/__stats' || path === '/.well-known/x402list.txt') return next();
+  if (path === '/__stats' || path === '/.well-known/x402list.txt' || path === '/.well-known/agent.json') return next();
   const rapidSecret = req.headers['x-rapidapi-proxy-secret'];
   if (rapidSecret && RAPIDAPI_SECRETS.has(rapidSecret)) return next();
   const hasPayment = !!(req.headers['payment-signature'] || req.headers['x-payment'] || req.headers['payment-authorization'] || String(req.headers['authorization'] || '').startsWith('Payment '));
@@ -2163,13 +2163,31 @@ if (shieldCleanup.unref) shieldCleanup.unref();
 // Safe to remove once the update is verified.
 // Machine-readable service map for LLM crawlers and MCP routers
 // (llmstxt.org convention): every endpoint, what it does, what it costs.
-const LLMS_TXT = "# Spread Paywall API\n\n> Pay-per-call API for AI agents: 186 endpoints for live crypto market data, SOL CEX/DEX spread and arbitrage data, Base chain reads, a 59-endpoint verification suite (IBAN, VIN, ISBN, email, crypto addresses, smart-contract lint and more), AI inference, token audits, web scraping, search, and micro-utilities. No accounts, no API keys \u2014 payment is the auth.\n\nPayment: x402 protocol (HTTP 402). USDC on Base (eip155:8453) and Solana (solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp). Prices from $0.001 to $0.05 per call, shown per endpoint below.\nBase URL: https://workspace-x402-paywall.onrender.com\nOpenAPI spec: https://workspace-x402-paywall.onrender.com/openapi.json\n\nHow to call: send a GET request to any endpoint. If unpaid, the server returns HTTP 402 with payment terms in the PAYMENT-REQUIRED header (and mirrored in the response body). Pay with any x402 client and retry the same request.\n\nMPP: this API also accepts the Machine Payments Protocol (HTTP 402 with a WWW-Authenticate: Payment challenge; retry with an Authorization: Payment credential). Tempo rail: pathUSD on Tempo (chainId 4217). Stripe rail: cards and Link via Shared Payment Tokens, on routes priced at $0.50 or more.\n\n## AI\n- GET /ai/ask \u2014 $0.005 \u2014 Ask an LLM anything: sends a text prompt and returns the generated answer as text - general-purpose inference (reasoning, drafting, summarization, Q&A) for agents without their own model key\n- GET /ai/image \u2014 $0.01 \u2014 Generates a 1024x1024 image from a text description and returns a ready-to-use image URL - illustrations, thumbnails and visual assets on demand\n- GET /ai/models \u2014 $0.001 \u2014 Returns a JSON array of the AI models this API can serve (live from the upstream provider), each with name, description and capabilities\n\n## AI Data\n- GET /scrape \u2014 $0.01 \u2014 Fetches any public URL and returns the page content as clean Markdown text - for agents that need to read articles, docs and web pages without browser tooling\n- GET /scrape/pdf \u2014 $0.01 \u2014 Fetches a PDF from a URL and returns the extracted text as a string in a JSON object, capped at 50,000 characters\n\n## Chain Data\n- GET /chain/balance \u2014 $0.003 \u2014 Returns a JSON object with the native ETH balance of a Base address\n- GET /chain/block-number \u2014 $0.001 \u2014 Returns a JSON object with the current Base block number\n- GET /chain/erc20-balance \u2014 $0.003 \u2014 Returns a JSON object with the ERC-20 token balance of a Base address\n- GET /chain/slot \u2014 $0.001 \u2014 Returns a JSON object with the current Solana slot\n- GET /chain/sol-balance \u2014 $0.003 \u2014 Returns a JSON object with the native SOL balance of a Solana wallet\n- GET /chain/spl-balance \u2014 $0.003 \u2014 Returns a JSON object with SPL token balances for a Solana wallet and mint\n\n## Crypto\n- GET /btc/fees \u2014 $0.005 \u2014 Returns a JSON object with current Bitcoin network fee estimates in satoshis per vByte\n- GET /crypto/ohlcv \u2014 $0.005 \u2014 Returns a JSON array of OHLCV candlestick data for a cryptocurrency symbol\n- GET /crypto/prices \u2014 $0.005 \u2014 Returns a JSON array of top cryptocurrencies by market cap with USD prices\n- GET /solana/audit \u2014 $0.05 \u2014 Audits a Solana token for rug-pull risk: RugCheck risk score, risk level and the specific risk findings - for agents screening tokens before trading\n- GET /wallet/portfolio \u2014 $0.05 \u2014 Returns a JSON object with native SOL balance and an array of SPL token balances for a Solana wallet\n- GET /whale-watch \u2014 $0.05 \u2014 Returns a JSON array of recent token swap transactions for a Solana wallet address\n\n## Data\n- GET /spread \u2014 $0.005 \u2014 Live SOL prices from the top 5 centralized exchanges and top 5 Solana DEXs with the widest bid-ask spread, in gross and estimated net basis points - for arbitrage screening, price discovery and execution checks\n- GET /spread/base \u2014 $0.005 \u2014 Returns a JSON object with live cross-DEX spreads on Base for a token (default WETH), plus the widest spread detected\n\n## DeFi\n- GET /defi/tvl \u2014 $0.005 \u2014 Returns a JSON array of total value locked figures across 468 blockchain chains\n- GET /defi/yields \u2014 $0.005 \u2014 Returns a JSON array of top DeFi yield pools sorted by APY percentage\n\n## Dev\n- GET /dev/crates \u2014 $0.005 \u2014 Returns a JSON object with metadata, version, and download count for a Rust crate name\n- GET /dev/dns \u2014 $0.005 \u2014 Returns a JSON object with DNS records for a domain name string via Google DNS-over-HTTPS\n- GET /dev/stackoverflow \u2014 $0.005 \u2014 Returns a JSON array of Stack Overflow questions matching the query with titles and scores\n\n## FX\n- GET /fx/convert \u2014 $0.005 \u2014 Converts a numeric amount between two ISO currency codes and returns a JSON object with the converted value\n- GET /fx/rates \u2014 $0.005 \u2014 Returns a JSON object with current European Central Bank foreign exchange rates\n\n## Finance\n- GET /finance/tickers \u2014 $0.005 \u2014 Returns a JSON array of all US public company ticker symbols with CIK numbers\n\n## Food\n- GET /food/search \u2014 $0.005 \u2014 Returns a JSON object with nutritional data (calories, macros) for a food name string\n\n## Fun\n- GET /fun/anime \u2014 $0.005 \u2014 Returns a JSON array of anime titles matching the query with scores and episode counts\n- GET /fun/lyrics \u2014 $0.005 \u2014 Returns a JSON object with song lyrics text for an artist and title string\n- GET /fun/tv \u2014 $0.005 \u2014 Returns a JSON array of TV shows matching the query with names, ratings, and premiere dates\n- GET /fun/advice \u2014 $0.005 \u2014 Returns a JSON object with a random piece of advice\n- GET /fun/chuck \u2014 $0.005 \u2014 Returns a random Chuck Norris joke as a JSON object\n- GET /fun/dog \u2014 $0.005 \u2014 Returns a JSON object with a random dog photo URL and its breed\n- GET /fun/fact \u2014 $0.005 \u2014 Returns a JSON object with a random interesting fact and its source\n- GET /fun/joke \u2014 $0.005 \u2014 Returns a random joke (safe-mode) as a JSON object with the joke text or a setup/delivery pair\n- GET /fun/pokemon \u2014 $0.005 \u2014 Returns a JSON object with Pokedex data for a Pokemon by name (or a random one): types, abilities, base stats and sprite URL\n- GET /fun/trivia \u2014 $0.005 \u2014 Returns a JSON array of trivia questions with category, difficulty, the correct answer and all answer options\n- GET /fun/xkcd \u2014 $0.005 \u2014 Returns a JSON object with an xkcd comic (latest by default, or by number): title, image URL and alt text\n\n## Geo\n- GET /geo/elevation \u2014 $0.005 \u2014 Returns a JSON object with elevation in meters for latitude/longitude coordinates\n- GET /geo/ip \u2014 $0.005 \u2014 Returns a JSON object with city, country, latitude, and longitude for an IPv4 or IPv6 address string\n- GET /geo/sun \u2014 $0.005 \u2014 Returns a JSON object with sunrise and sunset times as ISO 8601 strings for given coordinates\n- GET /geo/zip \u2014 $0.005 \u2014 Returns a JSON object with city name, latitude, and longitude for a postal code string\n\n## Government\n- GET /gov/datasets \u2014 $0.005 \u2014 Returns a JSON array of US government datasets matching the query string\n- GET /gov/fbi \u2014 $0.005 \u2014 Returns a JSON array of FBI wanted persons with names, charges, and descriptions\n- GET /gov/federal-register \u2014 $0.005 \u2014 Returns a JSON array of recent US federal register documents with titles and dates\n\n## Health\n- GET /health/gene \u2014 $0.005 \u2014 Returns a JSON object with gene annotations and identifiers for a gene symbol string\n- GET /health/trials \u2014 $0.005 \u2014 Returns a JSON array of clinical trials matching the query with phase, status, and conditions\n\n## Jobs\n- GET /jobs/remote \u2014 $0.005 \u2014 Returns a JSON array of remote job listings with titles, companies, and locations\n\n## Markets\n- GET /markets/polymarket \u2014 $0.005 \u2014 Returns a JSON array of live Polymarket prediction market events with odds and volume\n- GET /markets/kalshi \u2014 $0.005 \u2014 Returns a JSON array of live Kalshi prediction market events with prices in dollars (implied probability), volume and close times\n- GET /market/brief \u2014 $0.02 \u2014 One-call market brief: BTC/ETH/SOL spot prices with 24h change, the Crypto Fear and Greed index, top trending prediction markets by 24h volume, and the widest verified Kalshi-vs-Polymarket cross-venue gap\n- GET /markets/expiring-soon \u2014 $0.015 \u2014 Returns prediction markets on Polymarket and Kalshi closing inside a time window (default 48 hours), soonest first, with live Yes prices, volume, hours to close, and a near_boundary flag for contracts priced at or above 0.95 or at or below 0.05\n- GET /brief/topic \u2014 $0.05 \u2014 One-call topic brief: prediction-market prices for the topic on Polymarket and Kalshi, the SEC EDGAR company record when the topic is a listed company, a spot price when the topic is a major crypto asset, and a short encyclopedia context - query with ?q=\n- GET /brief/full \u2014 $0.05 \u2014 Full market bundle: the topic brief, the market brief, the live SOL CEX/DEX spread snapshot, and prediction markets expiring in the next 48 hours, in one call - query with ?q=\n- GET /brief/pack \u2014 $0.025 \u2014 Mid-tier market pack: the topic brief, prediction markets expiring in the next 48 hours, and the live SOL CEX/DEX spread snapshot, in one call - query with ?q=\n- GET /portfolio/generate \u2014 $0.05 \u2014 Efficient portfolio generator for agents: a BTC/ETH/SOL + USDC allocation for a risk level (conservative, balanced or aggressive), weighted by inverse volatility inside a risk template from 7 days of live Coinbase hourly candles - returns weights, dollar amounts, spot prices and realized volatility\n- GET /trade/analyze \u2014 $0.025 \u2014 Mechanical trade analysis for trading bots: 24h range position, trend, mean-reversion (Ornstein-Uhlenbeck) half-life, 4h momentum, support/resistance and a rule-based verdict for any symbol with a Coinbase USD pair - query with ?symbol=\n- GET /portfolio/analyze \u2014 $0.05 \u2014 Portfolio analyzer for agents: grades an existing portfolio given as SYMBOL:AMOUNT holdings - live values and weights (Coinbase for crypto, Yahoo/Nasdaq for US stocks), stable/crypto/stock split, largest position, per-asset 30d volatility, portfolio volatility estimate and concentration flags - query with ?holdings=\n\n## Meme Data\n- GET /meme/new \u2014 $0.005 \u2014 Returns a JSON array of newly launched meme tokens on the specified chain or all chains\n- GET /meme/token \u2014 $0.005 \u2014 Returns a JSON object with price, volume, and liquidity data for a token contract address\n- GET /meme/trending \u2014 $0.005 \u2014 Returns a JSON array of trending meme coin liquidity pools on the specified chain\n\n\n\n## Politics\n- GET /politics/headlines \u2014 $0.005 \u2014 Returns a JSON array of today's top global news stories (Wikipedia In the News) with article topics for each story\n- GET /politics/kalshi \u2014 $0.005 \u2014 Returns a JSON array of Kalshi politics market events with prices in dollars (implied probability) and volume\n- GET /politics/markets \u2014 $0.005 \u2014 Returns a JSON array of live Polymarket politics events (US and global) with odds and volume\n- GET /politics/polymarket \u2014 $0.005 \u2014 Returns a JSON array of live Polymarket politics events (US and global) with odds and volume - mirrors /politics/kalshi\n## Pump.fun\n- GET /pump/chains \u2014 $0.005 \u2014 Returns a JSON array of 100+ supported blockchain chain identifiers for meme token endpoints\n- GET /pump/migrating \u2014 $0.005 \u2014 Returns a JSON array of pump.fun tokens approaching Raydium migration threshold, sorted by migration progress percentage\n- GET /pump/new \u2014 $0.005 \u2014 Returns a JSON array of newly launched meme tokens with price and market cap data\n- GET /pump/trending \u2014 $0.005 \u2014 Returns a JSON array of trending meme coin liquidity pools on the specified chain\n\n## Reference\n- GET /ref/books \u2014 $0.005 \u2014 Returns a JSON array of books matching the query with titles, authors, and publish years\n- GET /ref/countries \u2014 $0.005 \u2014 Returns country profiles from the World Bank: name, capital, region, income level and coordinates for one country by ISO code or every country\n- GET /ref/define \u2014 $0.005 \u2014 Returns a JSON array of dictionary definitions for an English word string\n- GET /ref/holidays \u2014 $0.005 \u2014 Returns a JSON array of public holidays for an ISO country code and year integer\n\n## Science\n- GET /science/papers \u2014 $0.005 \u2014 Returns a JSON array of scholarly papers matching the query with titles, authors, and DOIs\n- GET /science/quakes \u2014 $0.005 \u2014 Returns a JSON array of recent earthquakes with magnitude, location, and timestamp from USGS\n\n## Search\n- GET /lookup/pypi \u2014 $0.005 \u2014 Returns a JSON object with metadata for a PyPI package name\n- GET /search/arxiv \u2014 $0.005 \u2014 Returns a JSON array of arXiv papers matching the query string\n- GET /search/fda \u2014 $0.005 \u2014 Returns a JSON array of FDA drug labels matching the query string\n- GET /search/geo \u2014 $0.005 \u2014 Converts a street address string to a JSON object with latitude, longitude, and formatted address via OpenStreetMap\n- GET /search/github \u2014 $0.005 \u2014 Returns a JSON array of GitHub repositories, code, users, or issues matching the query\n- GET /search/hn \u2014 $0.005 \u2014 Returns a JSON array of Hacker News posts matching the query string\n- GET /search/npm \u2014 $0.005 \u2014 Returns a JSON array of npm packages matching the query string\n- GET /search/sec \u2014 $0.005 \u2014 Returns a JSON array of SEC EDGAR filings matching the query string\n- GET /search/wikipedia \u2014 $0.005 \u2014 Returns a JSON array of Wikipedia articles matching the query string\n\n## Social\n- GET /social/bluesky \u2014 $0.005 \u2014 Returns a JSON array of Bluesky social users matching the query with handles and bios\n\n## Solana\n- GET /solana/top100 \u2014 $0.005 \u2014 Returns a JSON array of the top 100 Solana tokens by market cap with prices in USD and SOL\n\n## Space\n- GET /space/iss \u2014 $0.005 \u2014 Returns a JSON object with the current latitude and longitude of the International Space Station\n- GET /space/spacex \u2014 $0.005 \u2014 Returns a JSON object with details of the most recent SpaceX launch\n\n## Sports\n- GET /sports/football \u2014 $0.005 \u2014 Returns a JSON array of German Bundesliga football matches with scores and dates\n- GET /sports/nhl \u2014 $0.005 \u2014 Returns a JSON array of NHL team standings with wins, losses, and points\n- GET /sports/kalshi \u2014 $0.005 \u2014 Returns a JSON array of Kalshi game-winner markets for a league (NHL, NBA, NFL, MLB, FIFA World Cup) with live bid/ask/last prices in dollars = implied win probability\n- GET /sports/polymarket \u2014 $0.005 \u2014 Returns a JSON array of Polymarket sports markets for a league (NHL, NBA, NFL, MLB, EPL, soccer) with odds - mirrors /sports/kalshi\n- GET /sports/scores \u2014 $0.005 \u2014 Returns a JSON array of games for a league (NHL, NBA, NFL, MLB, FIFA World Cup, EPL, FIFA qualifiers) with live scores, status/clock and betting odds (spread, over/under) when available\n\n## Stocks\n- GET /stocks/list \u2014 $0.005 \u2014 Returns a JSON array of tokenized stocks with live prices\n- GET /stocks/price \u2014 $0.005 \u2014 Returns a JSON object with live price quote for a tokenized stock symbol\n\n## Utilities\n- GET /ping \u2014 $0.001 \u2014 Health check endpoint for x402 payment flow testing: returns a JSON object with service status and the current server timestamp\n- GET /utils/base64 \u2014 $0.001 \u2014 Encodes text to base64 or decodes base64 to text, returns a JSON object with the result string\n- GET /utils/cron-explain \u2014 $0.001 \u2014 Explains a 5-field cron expression field by field in plain language\n- GET /utils/csv2json \u2014 $0.001 \u2014 Converts CSV to a JSON array of objects\n- GET /utils/hash \u2014 $0.001 \u2014 Computes a cryptographic hash of input text, returns a JSON object with the hex digest string\n- GET /utils/html2md \u2014 $0.001 \u2014 Converts HTML to Markdown-ish plain text\n- GET /utils/ip \u2014 $0.001 \u2014 Returns a JSON object with the caller IP address as a string\n- GET /utils/json-validate \u2014 $0.001 \u2014 Validates JSON syntax and optionally checks it against a JSON Schema subset\n- GET /utils/json2csv \u2014 $0.001 \u2014 Converts a JSON array of objects to CSV\n- GET /utils/jwt-decode \u2014 $0.001 \u2014 Decodes a JWT header and payload (signature not verified)\n- GET /utils/md2html \u2014 $0.001 \u2014 Converts Markdown to HTML\n- GET /utils/password-generator \u2014 $0.001 \u2014 Generates a cryptographically random password\n- GET /utils/qr \u2014 $0.001 \u2014 Builds a QR-code image URL for the given text (free provider, properly encoded)\n- GET /utils/text-diff \u2014 $0.001 \u2014 Line-based diff of two texts with added/removed counts and hunks\n- GET /utils/time \u2014 $0.001 \u2014 Returns a JSON object with the current Unix timestamp integer and ISO 8601 time string\n- GET /utils/timezone \u2014 $0.001 \u2014 Converts a datetime between IANA timezones\n- GET /utils/uuid \u2014 $0.001 \u2014 Generates random UUID v4 values, returns a JSON array of UUID strings\n- GET /utils/xml2json \u2014 $0.001 \u2014 Converts an XML document to JSON (dependency-free parser)\n\n## Verification\n- GET /verify/address/btc \u2014 $0.001 \u2014 Validates Bitcoin P2PKH/P2SH/bech32 addresses\n- GET /verify/address/evm \u2014 $0.001 \u2014 Validates an EVM address and its EIP-55 checksum\n- GET /verify/address/polkadot \u2014 $0.001 \u2014 Validates a Polkadot/Substrate ss58 address checksum\n- GET /verify/address/solana \u2014 $0.001 \u2014 Validates a Solana address (base58, 32 bytes)\n- GET /verify/asn \u2014 $0.001 \u2014 Validates an Autonomous System Number and reports scope\n- GET /verify/base64 \u2014 $0.001 \u2014 Strictly validates base64/base64url encoding structure\n- GET /verify/card \u2014 $0.005 \u2014 Validates a card number Luhn checksum and detects the brand (format check only)\n- GET /verify/container \u2014 $0.005 \u2014 Validates an ISO 6346 shipping container code check digit\n- GET /verify/contract \u2014 $0.001 \u2014 Surface-level smart-contract linter: flags dangerous Solidity/Rust patterns (selfdestruct, delegatecall, tx.origin, unsafe blocks, missing signer checks)\n- GET /verify/cron \u2014 $0.001 \u2014 Validates a cron expression and computes the next run time\n- GET /verify/cusip \u2014 $0.005 \u2014 Validates a CUSIP securities identifier checksum\n- GET /verify/dea \u2014 $0.005 \u2014 Validates a DEA number format and checksum, returns a JSON object with validation result\n- GET /verify/dns \u2014 $0.001 \u2014 Returns DNS records (A/NS/MX/TXT) for a domain via DNS-over-HTTPS\n- GET /verify/domain \u2014 $0.005 \u2014 Returns RDAP registration status, age, expiry, and registrar for a domain\n- GET /verify/e164 \u2014 $0.001 \u2014 Validates E.164 international phone number formatting\n- GET /verify/ean \u2014 $0.005 \u2014 Validates EAN-13/EAN-8 barcode checksums\n- GET /verify/ein \u2014 $0.005 \u2014 Validates a US EIN format and IRS prefix\n- GET /verify/email \u2014 $0.01 \u2014 Validates email syntax and live MX records via DNS-over-HTTPS\n- GET /verify/email-disposable \u2014 $0.001 \u2014 Checks whether an email domain is a known disposable/throwaway provider\n- GET /verify/ens \u2014 $0.001 \u2014 Validates an ENS name against EIP-137 normalization rules\n- GET /verify/fedex \u2014 $0.005 \u2014 Validates FedEx tracking number structure (12/15/20/22 digits; checksum not published by FedEx)\n- GET /verify/hash/md5 \u2014 $0.001 \u2014 Validates a 32-char MD5 hex digest format\n- GET /verify/hash/sha256 \u2014 $0.001 \u2014 Validates a 64-char SHA-256 hex digest format\n- GET /verify/iban \u2014 $0.005 \u2014 Validates an IBAN checksum (ISO 13616 mod-97) and parses country/bank codes\n- GET /verify/imei \u2014 $0.005 \u2014 Validates a device IMEI Luhn checksum\n- GET /verify/ipv4 \u2014 $0.001 \u2014 Validates IPv4 format and classifies the address range\n- GET /verify/ipv6 \u2014 $0.001 \u2014 Validates IPv6 format and classifies the address range\n- GET /verify/isbn \u2014 $0.005 \u2014 Validates ISBN-10/ISBN-13 checksums\n- GET /verify/isin \u2014 $0.005 \u2014 Validates an ISIN securities identifier checksum\n- GET /verify/issn \u2014 $0.001 \u2014 Validates an ISSN check digit (ISO 3297)\n- GET /verify/json \u2014 $0.001 \u2014 Strictly validates JSON and pinpoints syntax errors\n- GET /verify/jwt \u2014 $0.001 \u2014 Structurally decodes a JWT header/payload and checks expiry (no signature verify)\n- GET /verify/lei \u2014 $0.005 \u2014 Validates a Legal Entity Identifier (ISO 17442 mod-97)\n- GET /verify/lightning \u2014 $0.001 \u2014 Validates a BOLT11 Lightning invoice: bech32 checksum, network, amount, timestamp and tagged fields\n- GET /verify/mac \u2014 $0.001 \u2014 Validates a MAC address and parses OUI/multicast bits\n- GET /verify/meid \u2014 $0.005 \u2014 Validates a device MEID hex format and check digit\n- GET /verify/nino \u2014 $0.005 \u2014 Validates a UK National Insurance number format and prefix rules\n- GET /verify/npi \u2014 $0.01 \u2014 Validates a 10-digit NPI number checksum and returns a JSON object with validation result plus CMS NPPES registry enrichment data\n- GET /verify/orcid \u2014 $0.001 \u2014 Validates an ORCID iD checksum (ISO 7064 MOD 11-2)\n- GET /verify/passport/mrz \u2014 $0.005 \u2014 Validates passport MRZ check digits (ICAO 9303, 2x44 chars)\n- GET /verify/password-strength \u2014 $0.001 \u2014 Scores password strength 0-4 with crack-time estimate and feedback (password never echoed back)\n- GET /verify/pwned \u2014 $0.01 \u2014 Checks a password against breach data via HIBP k-anonymity (never sent in full)\n- GET /verify/routing \u2014 $0.005 \u2014 Validates a US bank routing number (ABA) checksum\n- GET /verify/sedol \u2014 $0.005 \u2014 Validates a SEDOL (UK securities) checksum\n- GET /verify/semver \u2014 $0.001 \u2014 Validates Semantic Versioning 2.0.0 format\n- GET /verify/sin \u2014 $0.005 \u2014 Validates a Canadian SIN Luhn checksum\n- GET /verify/ssh-key \u2014 $0.001 \u2014 Validates an OpenSSH public key structure and reports algorithm/bit length (key is never echoed)\n- GET /verify/ssl \u2014 $0.005 \u2014 Fetches a domain TLS certificate and reports validity window and expiry\n- GET /verify/ssn \u2014 $0.005 \u2014 Validates a US SSN format against impossible SSA combinations (format only)\n- GET /verify/swift \u2014 $0.005 \u2014 Validates a SWIFT/BIC code structure and parses bank/country/branch\n- GET /verify/ulid \u2014 $0.001 \u2014 Validates ULID format and extracts its timestamp\n- GET /verify/upc \u2014 $0.005 \u2014 Validates UPC-A/UPC-E barcode checksums\n- GET /verify/upi \u2014 $0.005 \u2014 Validates a UPI ID format (India, handle@bank)\n- GET /verify/ups \u2014 $0.005 \u2014 Validates a UPS tracking number (1Z) check digit\n- GET /verify/url-malicious \u2014 $0.001 \u2014 Checks a URL/host against the URLhaus malware feed: clean, malicious, or unknown\n- GET /verify/usps \u2014 $0.005 \u2014 Validates a USPS tracking number checksum\n- GET /verify/uuid \u2014 $0.001 \u2014 Validates UUID structure and detects the version\n- GET /verify/vat \u2014 $0.005 \u2014 Validates an EU/GB VAT number format per country rules\n- GET /verify/vin \u2014 $0.005 \u2014 Validates a VIN check digit and decodes year/plant\n\n## Predict\n- GET /predict/spread \u2014 $0.005 \u2014 Returns title-matched Kalshi vs Polymarket prices on the same political questions with the cross-venue price gap in percentage points and basis points - prediction-market arbitrage screening\n- GET /predict/trending \u2014 $0.005 \u2014 Returns the trending prediction markets right now: top Polymarket events by 24h volume plus headline Kalshi election and Fed series, labeled by venue\n- GET /predict/search \u2014 $0.005 \u2014 Searches live prediction markets on both Polymarket and Kalshi by keyword and returns matching events with odds from both venues in one call\n- GET /kalshi/elections \u2014 $0.005 \u2014 Returns Kalshi US election market events: the 2028 presidential party-winner series and the House-majority series, with prices in dollars (implied probability) and volume\n- GET /polymarket/elections \u2014 $0.005 \u2014 Returns live Polymarket US election events (elections, 2026 midterms, House races) deduplicated across tags and sorted by volume\n- GET /markets/fear-greed \u2014 $0.005 \u2014 Returns the current Crypto Fear and Greed Index value (0-100), its classification and timestamp\n- GET /defi/stablecoins \u2014 $0.005 \u2014 Returns the top stablecoins by circulating supply with live price and peg type\n- GET /defi/protocols \u2014 $0.005 \u2014 Returns the top DeFi protocols by TVL with 1-day and 7-day change percentages\n- GET /edgar/company \u2014 $0.005 \u2014 Resolves a US stock ticker to its SEC EDGAR company record: CIK number, legal name and submissions URL\n- GET /solana/token-holders \u2014 $0.005 \u2014 Returns the top 20 holders of a Solana token mint with percent of supply each, plus top-10 and top-20 concentration percentages\n- GET /sports/ufc \u2014 $0.005 \u2014 Returns UFC events from the ESPN MMA scoreboard with status and the fight card (both fighters per bout, odds summary when available)\n- GET /sports/ufc-odds \u2014 $0.005 \u2014 Returns live Polymarket UFC markets with current Yes/No prices per outcome\n\n## Weather\n- GET /weather/current \u2014 $0.005 \u2014 Returns a JSON object with current weather conditions and forecast for a location\n";
+const LLMS_TXT = "# Spread Paywall API\n\n> Pay-per-call API for AI agents: 186 endpoints for live crypto market data, SOL CEX/DEX spread and arbitrage data, Base chain reads, a 59-endpoint verification suite (IBAN, VIN, ISBN, email, crypto addresses, smart-contract lint and more), AI inference, token audits, web scraping, search, and micro-utilities. No accounts, no API keys \u2014 payment is the auth.\n\nPayment: x402 protocol (HTTP 402). USDC on Base (eip155:8453) and Solana (solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp). Prices from $0.001 to $0.05 per call, shown per endpoint below.\nBase URL: https://workspace-x402-paywall.onrender.com\nOpenAPI spec: https://workspace-x402-paywall.onrender.com/openapi.json\n\nHow to call: send a GET request to any endpoint. If unpaid, the server returns HTTP 402 with payment terms in the PAYMENT-REQUIRED header (and mirrored in the response body). Pay with any x402 client and retry the same request.\n\nMPP: this API also accepts the Machine Payments Protocol (HTTP 402 with a WWW-Authenticate: Payment challenge; retry with an Authorization: Payment credential). Tempo rail: pathUSD on Tempo (chainId 4217). Stripe rail: cards and Link via Shared Payment Tokens, on routes priced at $0.50 or more.\n\n## AI\n- GET /ai/ask \u2014 $0.005 \u2014 Ask an LLM anything: sends a text prompt and returns the generated answer as text - general-purpose inference (reasoning, drafting, summarization, Q&A) for agents without their own model key\n- GET /ai/image \u2014 $0.01 \u2014 Generates a 1024x1024 image from a text description and returns a ready-to-use image URL - illustrations, thumbnails and visual assets on demand\n- GET /ai/models \u2014 $0.001 \u2014 Returns a JSON array of the AI models this API can serve (live from the upstream provider), each with name, description and capabilities\n\n## AI Data\n- GET /scrape \u2014 $0.01 \u2014 Fetches any public URL and returns the page content as clean Markdown text - for agents that need to read articles, docs and web pages without browser tooling\n- GET /scrape/pdf \u2014 $0.01 \u2014 Fetches a PDF from a URL and returns the extracted text as a string in a JSON object, capped at 50,000 characters\n\n## Chain Data\n- GET /chain/balance \u2014 $0.003 \u2014 Returns a JSON object with the native ETH balance of a Base address\n- GET /chain/block-number \u2014 $0.001 \u2014 Returns a JSON object with the current Base block number\n- GET /chain/erc20-balance \u2014 $0.003 \u2014 Returns a JSON object with the ERC-20 token balance of a Base address\n- GET /chain/slot \u2014 $0.001 \u2014 Returns a JSON object with the current Solana slot\n- GET /chain/sol-balance \u2014 $0.003 \u2014 Returns a JSON object with the native SOL balance of a Solana wallet\n- GET /chain/spl-balance \u2014 $0.003 \u2014 Returns a JSON object with SPL token balances for a Solana wallet and mint\n\n## Crypto\n- GET /btc/fees \u2014 $0.005 \u2014 Returns a JSON object with current Bitcoin network fee estimates in satoshis per vByte\n- GET /crypto/ohlcv \u2014 $0.005 \u2014 Returns the latest OHLCV candles (open, high, low, close, volume) for a crypto coin such as btc-bitcoin - price history for charting, backtests and momentum checks without a market-data subscription\n- GET /crypto/prices \u2014 $0.005 \u2014 Returns a JSON array of top cryptocurrencies by market cap with USD prices\n- GET /solana/audit \u2014 $0.05 \u2014 Audits a Solana token for rug-pull risk: RugCheck risk score, risk level and the specific risk findings - for agents screening tokens before trading\n- GET /wallet/portfolio \u2014 $0.05 \u2014 Returns a JSON object with native SOL balance and an array of SPL token balances for a Solana wallet\n- GET /whale-watch \u2014 $0.05 \u2014 Returns the most recent swaps of any Solana wallet - timestamp, transaction signature, a plain-language description of each swap and the network fee - for copy-trading screens, whale tracking and wallet forensics\n\n## Data\n- GET /spread \u2014 $0.005 \u2014 Live SOL prices from the top 5 centralized exchanges and top 5 Solana DEXs with the widest bid-ask spread, in gross and estimated net basis points - for arbitrage screening, price discovery and execution checks\n- GET /spread/base \u2014 $0.005 \u2014 Returns a JSON object with live cross-DEX spreads on Base for a token (default WETH), plus the widest spread detected\n\n## DeFi\n- GET /defi/tvl \u2014 $0.005 \u2014 Returns a JSON array of total value locked figures across 468 blockchain chains\n- GET /defi/yields \u2014 $0.005 \u2014 Returns a JSON array of top DeFi yield pools sorted by APY percentage\n\n## Dev\n- GET /dev/crates \u2014 $0.005 \u2014 Returns a JSON object with metadata, version, and download count for a Rust crate name\n- GET /dev/dns \u2014 $0.005 \u2014 Returns a JSON object with DNS records for a domain name string via Google DNS-over-HTTPS\n- GET /dev/stackoverflow \u2014 $0.005 \u2014 Returns a JSON array of Stack Overflow questions matching the query with titles and scores\n\n## FX\n- GET /fx/convert \u2014 $0.005 \u2014 Converts an amount between any two ISO currency codes at the current rate and returns the rate used plus the converted result - one-call currency math for commerce and travel agents\n- GET /fx/rates \u2014 $0.005 \u2014 Returns current European Central Bank reference FX rates for a base currency (default USD), optionally filtered to specific symbols - currency tables for pricing, accounting and travel agents\n\n## Finance\n- GET /finance/tickers \u2014 $0.005 \u2014 Returns a JSON array of all US public company ticker symbols with CIK numbers\n\n## Food\n- GET /food/search \u2014 $0.005 \u2014 Searches the Open Food Facts product database by name and returns matching packaged foods with brand and Nutri-Score grade - product lookup for grocery, nutrition and shopping agents\n\n## Fun\n- GET /fun/anime \u2014 $0.005 \u2014 Returns a JSON array of anime titles matching the query with scores and episode counts\n- GET /fun/lyrics \u2014 $0.005 \u2014 Returns a JSON object with song lyrics text for an artist and title string\n- GET /fun/tv \u2014 $0.005 \u2014 Returns a JSON array of TV shows matching the query with names, ratings, and premiere dates\n- GET /fun/advice \u2014 $0.005 \u2014 Returns a JSON object with a random piece of advice\n- GET /fun/chuck \u2014 $0.005 \u2014 Returns a random Chuck Norris joke as a JSON object\n- GET /fun/dog \u2014 $0.005 \u2014 Returns a JSON object with a random dog photo URL and its breed\n- GET /fun/fact \u2014 $0.005 \u2014 Returns a JSON object with a random interesting fact and its source\n- GET /fun/joke \u2014 $0.005 \u2014 Returns a random joke (safe-mode) as a JSON object with the joke text or a setup/delivery pair\n- GET /fun/pokemon \u2014 $0.005 \u2014 Returns a JSON object with Pokedex data for a Pokemon by name (or a random one): types, abilities, base stats and sprite URL\n- GET /fun/trivia \u2014 $0.005 \u2014 Returns a JSON array of trivia questions with category, difficulty, the correct answer and all answer options\n- GET /fun/xkcd \u2014 $0.005 \u2014 Returns a JSON object with an xkcd comic (latest by default, or by number): title, image URL and alt text\n\n## Geo\n- GET /geo/elevation \u2014 $0.005 \u2014 Returns the ground elevation in meters for any latitude/longitude point - terrain context for mapping, routing, hiking and site-planning agents\n- GET /geo/ip \u2014 $0.005 \u2014 Returns a JSON object with city, country, latitude, and longitude for an IPv4 or IPv6 address string\n- GET /geo/sun \u2014 $0.005 \u2014 Returns a JSON object with sunrise and sunset times as ISO 8601 strings for given coordinates\n- GET /geo/zip \u2014 $0.005 \u2014 Resolves a postal code plus country to its place(s): name, state and latitude/longitude for each - address normalization and location lookup for logistics and commerce agents\n\n## Government\n- GET /gov/datasets \u2014 $0.005 \u2014 Returns a JSON array of US government datasets matching the query string\n- GET /gov/fbi \u2014 $0.005 \u2014 Returns a JSON array of FBI wanted persons with names, charges, and descriptions\n- GET /gov/federal-register \u2014 $0.005 \u2014 Returns a JSON array of recent US federal register documents with titles and dates\n\n## Health\n- GET /health/gene \u2014 $0.005 \u2014 Returns a JSON object with gene annotations and identifiers for a gene symbol string\n- GET /health/trials \u2014 $0.005 \u2014 Returns a JSON array of clinical trials matching the query with phase, status, and conditions\n\n## Jobs\n- GET /jobs/remote \u2014 $0.005 \u2014 Returns a JSON array of remote job listings with titles, companies, and locations\n\n## Markets\n- GET /markets/polymarket \u2014 $0.005 \u2014 Returns a JSON array of live Polymarket prediction market events with odds and volume\n- GET /markets/kalshi \u2014 $0.005 \u2014 Returns a JSON array of live Kalshi prediction market events with prices in dollars (implied probability), volume and close times\n- GET /market/brief \u2014 $0.02 \u2014 One-call market brief: BTC/ETH/SOL spot prices with 24h change, the Crypto Fear and Greed index, top trending prediction markets by 24h volume, and the widest verified Kalshi-vs-Polymarket cross-venue gap\n- GET /markets/expiring-soon \u2014 $0.015 \u2014 Returns prediction markets on Polymarket and Kalshi closing inside a time window (default 48 hours), soonest first, with live Yes prices, volume, hours to close, and a near_boundary flag for contracts priced at or above 0.95 or at or below 0.05\n- GET /brief/topic \u2014 $0.05 \u2014 One-call topic brief: prediction-market prices for the topic on Polymarket and Kalshi, the SEC EDGAR company record when the topic is a listed company, a spot price when the topic is a major crypto asset, and a short encyclopedia context - query with ?q=\n- GET /brief/full \u2014 $0.05 \u2014 Full market bundle: the topic brief, the market brief, the live SOL CEX/DEX spread snapshot, and prediction markets expiring in the next 48 hours, in one call - query with ?q=\n- GET /brief/pack \u2014 $0.025 \u2014 Mid-tier market pack: the topic brief, prediction markets expiring in the next 48 hours, and the live SOL CEX/DEX spread snapshot, in one call - query with ?q=\n- GET /portfolio/generate \u2014 $0.05 \u2014 Efficient portfolio generator for agents: a BTC/ETH/SOL + USDC allocation for a risk level (conservative, balanced or aggressive), weighted by inverse volatility inside a risk template from 7 days of live Coinbase hourly candles - returns weights, dollar amounts, spot prices and realized volatility\n- GET /trade/analyze \u2014 $0.025 \u2014 Mechanical trade analysis for trading bots: 24h range position, trend, mean-reversion (Ornstein-Uhlenbeck) half-life, 4h momentum, support/resistance and a rule-based verdict for any symbol with a Coinbase USD pair - query with ?symbol=\n- GET /portfolio/analyze \u2014 $0.05 \u2014 Portfolio analyzer for agents: grades an existing portfolio given as SYMBOL:AMOUNT holdings - live values and weights (Coinbase for crypto, Yahoo/Nasdaq for US stocks), stable/crypto/stock split, largest position, per-asset 30d volatility, portfolio volatility estimate and concentration flags - query with ?holdings=\n\n## Meme Data\n- GET /meme/new \u2014 $0.005 \u2014 Returns a JSON array of newly launched meme tokens on the specified chain or all chains\n- GET /meme/token \u2014 $0.005 \u2014 Returns a JSON object with price, volume, and liquidity data for a token contract address\n- GET /meme/trending \u2014 $0.005 \u2014 Returns a JSON array of trending meme coin liquidity pools on the specified chain\n\n\n\n## Politics\n- GET /politics/headlines \u2014 $0.005 \u2014 Returns a JSON array of today's top global news stories (Wikipedia In the News) with article topics for each story\n- GET /politics/kalshi \u2014 $0.005 \u2014 Returns a JSON array of Kalshi politics market events with prices in dollars (implied probability) and volume\n- GET /politics/markets \u2014 $0.005 \u2014 Returns a JSON array of live Polymarket politics events (US and global) with odds and volume\n- GET /politics/polymarket \u2014 $0.005 \u2014 Returns a JSON array of live Polymarket politics events (US and global) with odds and volume - mirrors /politics/kalshi\n## Pump.fun\n- GET /pump/chains \u2014 $0.005 \u2014 Returns a JSON array of 100+ supported blockchain chain identifiers for meme token endpoints\n- GET /pump/migrating \u2014 $0.005 \u2014 Returns a JSON array of pump.fun tokens approaching Raydium migration threshold, sorted by migration progress percentage\n- GET /pump/new \u2014 $0.005 \u2014 Returns a JSON array of newly launched meme tokens with price and market cap data\n- GET /pump/trending \u2014 $0.005 \u2014 Returns a JSON array of trending meme coin liquidity pools on the specified chain\n\n## Reference\n- GET /ref/books \u2014 $0.005 \u2014 Returns a JSON array of books matching the query with titles, authors, and publish years\n- GET /ref/countries \u2014 $0.005 \u2014 Returns country profiles from the World Bank: name, capital, region, income level and coordinates for one country by ISO code or every country\n- GET /ref/define \u2014 $0.005 \u2014 Returns a JSON array of dictionary definitions for an English word string\n- GET /ref/holidays \u2014 $0.005 \u2014 Returns the public holidays for a country and year with date plus English and local names - business-day, scheduling and payroll logic without maintaining holiday tables\n\n## Science\n- GET /science/papers \u2014 $0.005 \u2014 Returns a JSON array of scholarly papers matching the query with titles, authors, and DOIs\n- GET /science/quakes \u2014 $0.005 \u2014 Returns a JSON array of recent earthquakes with magnitude, location, and timestamp from USGS\n\n## Search\n- GET /lookup/pypi \u2014 $0.005 \u2014 Looks up a PyPI package by exact name and returns its current version and summary - dependency checks for Python coding agents\n- GET /search/arxiv \u2014 $0.005 \u2014 Searches arXiv by keyword and returns matching papers with title, arXiv ID, publication date and abstract - literature lookup for research agents\n- GET /search/fda \u2014 $0.005 \u2014 Searches FDA drug labels (openFDA) by drug name or keyword and returns matches with brand name, generic name and manufacturer - drug-label lookup for health research agents\n- GET /search/geo \u2014 $0.005 \u2014 Geocodes an address or place name via OpenStreetMap and returns up to 5 matches with formatted address and latitude/longitude - turn free-text locations into coordinates\n- GET /search/github \u2014 $0.005 \u2014 Searches GitHub repositories, code, users or issues by keyword and returns matches with URL, description, stars and last-updated date, plus the total match count - code discovery for developer agents\n- GET /search/hn \u2014 $0.005 \u2014 Searches Hacker News by keyword and returns matching stories with URL, points and comment count - tech-trend and community-signal research\n- GET /search/npm \u2014 $0.005 \u2014 Searches the npm registry by keyword and returns matching packages with name, version and description - dependency and library research for coding agents\n- GET /search/sec \u2014 $0.005 \u2014 Searches SEC EDGAR full-text by keyword and returns matching filings with form type, filing date and accession number - filing discovery for finance and compliance agents\n- GET /search/wikipedia \u2014 $0.005 \u2014 Searches Wikipedia by keyword and returns matching article titles with text snippets - quick encyclopedia context for research and RAG agents\n\n## Social\n- GET /social/bluesky \u2014 $0.005 \u2014 Returns a JSON array of Bluesky social users matching the query with handles and bios\n\n## Solana\n- GET /solana/top100 \u2014 $0.005 \u2014 Returns a JSON array of the top 100 Solana tokens by market cap with prices in USD and SOL\n\n## Space\n- GET /space/iss \u2014 $0.005 \u2014 Returns a JSON object with the current latitude and longitude of the International Space Station\n- GET /space/spacex \u2014 $0.005 \u2014 Returns a JSON object with details of the most recent SpaceX launch\n\n## Sports\n- GET /sports/football \u2014 $0.005 \u2014 Returns a JSON array of German Bundesliga football matches with scores and dates\n- GET /sports/nhl \u2014 $0.005 \u2014 Returns a JSON array of NHL team standings with wins, losses, and points\n- GET /sports/kalshi \u2014 $0.005 \u2014 Returns a JSON array of Kalshi game-winner markets for a league (NHL, NBA, NFL, MLB, FIFA World Cup) with live bid/ask/last prices in dollars = implied win probability\n- GET /sports/polymarket \u2014 $0.005 \u2014 Returns a JSON array of Polymarket sports markets for a league (NHL, NBA, NFL, MLB, EPL, soccer) with odds - mirrors /sports/kalshi\n- GET /sports/scores \u2014 $0.005 \u2014 Returns a JSON array of games for a league (NHL, NBA, NFL, MLB, FIFA World Cup, EPL, FIFA qualifiers) with live scores, status/clock and betting odds (spread, over/under) when available\n\n## Stocks\n- GET /stocks/list \u2014 $0.005 \u2014 Returns a JSON array of tokenized stocks with live prices\n- GET /stocks/price \u2014 $0.005 \u2014 Live quote for a tokenized stock (xStocks such as AAPLx, NVDAx, TSLAx): USD price, 24h change, 24h volume and liquidity from the most active DEX pair, with the chain and DEX named - tokenized-equity pricing without a brokerage feed\n\n## Utilities\n- GET /ping \u2014 $0.001 \u2014 Health check endpoint for x402 payment flow testing: returns a JSON object with service status and the current server timestamp\n- GET /utils/base64 \u2014 $0.001 \u2014 Encodes text to base64 or decodes base64 back to text and returns the result string - payload encoding/decoding for agents without local shell tooling\n- GET /utils/cron-explain \u2014 $0.001 \u2014 Explains a 5-field cron expression field by field in plain language\n- GET /utils/csv2json \u2014 $0.001 \u2014 Converts CSV to a JSON array of objects\n- GET /utils/hash \u2014 $0.001 \u2014 Computes a cryptographic hash (sha256, sha512, sha1 or md5) of input text and returns the hex digest - checksums and content fingerprinting for agents without local tooling\n- GET /utils/html2md \u2014 $0.001 \u2014 Converts HTML to Markdown-ish plain text\n- GET /utils/ip \u2014 $0.001 \u2014 Returns the public IP address of the caller as seen by the server - egress-IP checks for agents running behind proxies or VPNs\n- GET /utils/json-validate \u2014 $0.001 \u2014 Validates JSON syntax and optionally checks it against a JSON Schema subset\n- GET /utils/json2csv \u2014 $0.001 \u2014 Converts a JSON array of objects to CSV\n- GET /utils/jwt-decode \u2014 $0.001 \u2014 Decodes a JWT header and payload (signature not verified)\n- GET /utils/md2html \u2014 $0.001 \u2014 Converts Markdown to HTML\n- GET /utils/password-generator \u2014 $0.001 \u2014 Generates a cryptographically random password\n- GET /utils/qr \u2014 $0.001 \u2014 Builds a QR-code image URL for the given text (free provider, properly encoded)\n- GET /utils/text-diff \u2014 $0.001 \u2014 Line-based diff of two texts with added/removed counts and hunks\n- GET /utils/time \u2014 $0.001 \u2014 Returns the current server time as a Unix timestamp (seconds and milliseconds) and an ISO 8601 string - a trusted external clock for scheduling, expiry checks and log correlation\n- GET /utils/timezone \u2014 $0.001 \u2014 Converts a datetime between IANA timezones\n- GET /utils/uuid \u2014 $0.001 \u2014 Generates random UUID v4 values (1-100 per call) and returns them in a JSON object with the count and the uuids array - unique IDs for records, sessions and idempotency keys\n- GET /utils/xml2json \u2014 $0.001 \u2014 Converts an XML document to JSON (dependency-free parser)\n\n## Verification\n- GET /verify/address/btc \u2014 $0.001 \u2014 Validates Bitcoin P2PKH/P2SH/bech32 addresses\n- GET /verify/address/evm \u2014 $0.001 \u2014 Validates an EVM address and its EIP-55 checksum\n- GET /verify/address/polkadot \u2014 $0.001 \u2014 Validates a Polkadot/Substrate ss58 address checksum\n- GET /verify/address/solana \u2014 $0.001 \u2014 Validates a Solana address (base58, 32 bytes)\n- GET /verify/asn \u2014 $0.001 \u2014 Validates an Autonomous System Number and reports scope\n- GET /verify/base64 \u2014 $0.001 \u2014 Strictly validates base64/base64url encoding structure\n- GET /verify/card \u2014 $0.005 \u2014 Validates a card number Luhn checksum and detects the brand (format check only)\n- GET /verify/container \u2014 $0.005 \u2014 Validates an ISO 6346 shipping container code check digit\n- GET /verify/contract \u2014 $0.001 \u2014 Surface-level smart-contract linter: flags dangerous Solidity/Rust patterns (selfdestruct, delegatecall, tx.origin, unsafe blocks, missing signer checks)\n- GET /verify/cron \u2014 $0.001 \u2014 Validates a cron expression and computes the next run time\n- GET /verify/cusip \u2014 $0.005 \u2014 Validates a CUSIP securities identifier checksum\n- GET /verify/dea \u2014 $0.005 \u2014 Validates a DEA number format and checksum, returns a JSON object with validation result\n- GET /verify/dns \u2014 $0.001 \u2014 Returns DNS records (A/NS/MX/TXT) for a domain via DNS-over-HTTPS\n- GET /verify/domain \u2014 $0.005 \u2014 Returns RDAP registration status, age, expiry, and registrar for a domain\n- GET /verify/e164 \u2014 $0.001 \u2014 Validates E.164 international phone number formatting\n- GET /verify/ean \u2014 $0.005 \u2014 Validates EAN-13/EAN-8 barcode checksums\n- GET /verify/ein \u2014 $0.005 \u2014 Validates a US EIN format and IRS prefix\n- GET /verify/email \u2014 $0.01 \u2014 Validates email syntax and live MX records via DNS-over-HTTPS\n- GET /verify/email-disposable \u2014 $0.001 \u2014 Checks whether an email domain is a known disposable/throwaway provider\n- GET /verify/ens \u2014 $0.001 \u2014 Validates an ENS name against EIP-137 normalization rules\n- GET /verify/fedex \u2014 $0.005 \u2014 Validates FedEx tracking number structure (12/15/20/22 digits; checksum not published by FedEx)\n- GET /verify/hash/md5 \u2014 $0.001 \u2014 Validates a 32-char MD5 hex digest format\n- GET /verify/hash/sha256 \u2014 $0.001 \u2014 Validates a 64-char SHA-256 hex digest format\n- GET /verify/iban \u2014 $0.005 \u2014 Validates an IBAN checksum (ISO 13616 mod-97) and parses country/bank codes\n- GET /verify/imei \u2014 $0.005 \u2014 Validates a device IMEI Luhn checksum\n- GET /verify/ipv4 \u2014 $0.001 \u2014 Validates IPv4 format and classifies the address range\n- GET /verify/ipv6 \u2014 $0.001 \u2014 Validates IPv6 format and classifies the address range\n- GET /verify/isbn \u2014 $0.005 \u2014 Validates ISBN-10/ISBN-13 checksums\n- GET /verify/isin \u2014 $0.005 \u2014 Validates an ISIN securities identifier checksum\n- GET /verify/issn \u2014 $0.001 \u2014 Validates an ISSN check digit (ISO 3297)\n- GET /verify/json \u2014 $0.001 \u2014 Strictly validates JSON and pinpoints syntax errors\n- GET /verify/jwt \u2014 $0.001 \u2014 Structurally decodes a JWT header/payload and checks expiry (no signature verify)\n- GET /verify/lei \u2014 $0.005 \u2014 Validates a Legal Entity Identifier (ISO 17442 mod-97)\n- GET /verify/lightning \u2014 $0.001 \u2014 Validates a BOLT11 Lightning invoice: bech32 checksum, network, amount, timestamp and tagged fields\n- GET /verify/mac \u2014 $0.001 \u2014 Validates a MAC address and parses OUI/multicast bits\n- GET /verify/meid \u2014 $0.005 \u2014 Validates a device MEID hex format and check digit\n- GET /verify/nino \u2014 $0.005 \u2014 Validates a UK National Insurance number format and prefix rules\n- GET /verify/npi \u2014 $0.01 \u2014 Validates a 10-digit NPI number checksum and returns a JSON object with validation result plus CMS NPPES registry enrichment data\n- GET /verify/orcid \u2014 $0.001 \u2014 Validates an ORCID iD checksum (ISO 7064 MOD 11-2)\n- GET /verify/passport/mrz \u2014 $0.005 \u2014 Validates passport MRZ check digits (ICAO 9303, 2x44 chars)\n- GET /verify/password-strength \u2014 $0.001 \u2014 Scores password strength 0-4 with crack-time estimate and feedback (password never echoed back)\n- GET /verify/pwned \u2014 $0.01 \u2014 Checks a password against breach data via HIBP k-anonymity (never sent in full)\n- GET /verify/routing \u2014 $0.005 \u2014 Validates a US bank routing number (ABA) checksum\n- GET /verify/sedol \u2014 $0.005 \u2014 Validates a SEDOL (UK securities) checksum\n- GET /verify/semver \u2014 $0.001 \u2014 Validates Semantic Versioning 2.0.0 format\n- GET /verify/sin \u2014 $0.005 \u2014 Validates a Canadian SIN Luhn checksum\n- GET /verify/ssh-key \u2014 $0.001 \u2014 Validates an OpenSSH public key structure and reports algorithm/bit length (key is never echoed)\n- GET /verify/ssl \u2014 $0.005 \u2014 Fetches a domain TLS certificate and reports validity window and expiry\n- GET /verify/ssn \u2014 $0.005 \u2014 Validates a US SSN format against impossible SSA combinations (format only)\n- GET /verify/swift \u2014 $0.005 \u2014 Validates a SWIFT/BIC code structure and parses bank/country/branch\n- GET /verify/ulid \u2014 $0.001 \u2014 Validates ULID format and extracts its timestamp\n- GET /verify/upc \u2014 $0.005 \u2014 Validates UPC-A/UPC-E barcode checksums\n- GET /verify/upi \u2014 $0.005 \u2014 Validates a UPI ID format (India, handle@bank)\n- GET /verify/ups \u2014 $0.005 \u2014 Validates a UPS tracking number (1Z) check digit\n- GET /verify/url-malicious \u2014 $0.001 \u2014 Checks a URL/host against the URLhaus malware feed: clean, malicious, or unknown\n- GET /verify/usps \u2014 $0.005 \u2014 Validates a USPS tracking number checksum\n- GET /verify/uuid \u2014 $0.001 \u2014 Validates UUID structure and detects the version\n- GET /verify/vat \u2014 $0.005 \u2014 Validates an EU/GB VAT number format per country rules\n- GET /verify/vin \u2014 $0.005 \u2014 Validates a VIN check digit and decodes year/plant\n\n## Predict\n- GET /predict/spread \u2014 $0.005 \u2014 Returns title-matched Kalshi vs Polymarket prices on the same political questions with the cross-venue price gap in percentage points and basis points - prediction-market arbitrage screening\n- GET /predict/trending \u2014 $0.005 \u2014 Returns the trending prediction markets right now: top Polymarket events by 24h volume plus headline Kalshi election and Fed series, labeled by venue\n- GET /predict/search \u2014 $0.005 \u2014 Searches live prediction markets on both Polymarket and Kalshi by keyword and returns matching events with odds from both venues in one call\n- GET /kalshi/elections \u2014 $0.005 \u2014 Returns Kalshi US election market events: the 2028 presidential party-winner series and the House-majority series, with prices in dollars (implied probability) and volume\n- GET /polymarket/elections \u2014 $0.005 \u2014 Returns live Polymarket US election events (elections, 2026 midterms, House races) deduplicated across tags and sorted by volume\n- GET /markets/fear-greed \u2014 $0.005 \u2014 Returns the current Crypto Fear and Greed Index value (0-100), its classification and timestamp\n- GET /defi/stablecoins \u2014 $0.005 \u2014 Returns the top stablecoins by circulating supply with live price and peg type\n- GET /defi/protocols \u2014 $0.005 \u2014 Returns the top DeFi protocols by TVL with 1-day and 7-day change percentages\n- GET /edgar/company \u2014 $0.005 \u2014 Resolves a US stock ticker to its SEC EDGAR company record: CIK number, legal name and submissions URL\n- GET /solana/token-holders \u2014 $0.005 \u2014 Returns the top 20 holders of a Solana token mint with percent of supply each, plus top-10 and top-20 concentration percentages\n- GET /sports/ufc \u2014 $0.005 \u2014 Returns UFC events from the ESPN MMA scoreboard with status and the fight card (both fighters per bout, odds summary when available)\n- GET /sports/ufc-odds \u2014 $0.005 \u2014 Returns live Polymarket UFC markets with current Yes/No prices per outcome\n\n## Weather\n- GET /weather/current \u2014 $0.005 \u2014 Returns a JSON object with current weather conditions and forecast for a location\n";
 app.get('/llms.txt', (req, res) => {
   res.type('text/plain; charset=utf-8').send(LLMS_TXT);
 });
 
 app.get('/.well-known/x402list.txt', (req, res) => {
   res.type('text/plain').send('x402list-verify-V3aaOq-F1g8rfIc-ORXv9463Ml8vZzADc4i6LeBYLEc\n');
+});
+
+// Open 402 Directory provider manifest. Like the x402list.txt proof above,
+// this must sit before the paywall so the registry can read it unpaid;
+// it is a discovery file, not a paid route (not in PAYWALL_CFG).
+app.get('/.well-known/agent.json', (req, res) => {
+  res.json({
+    name: 'Spread Paywall API',
+    description: 'Pay-per-call x402 API - 186 endpoints of live market, prediction-market and crypto data for agents. No accounts, no API keys; payment is the auth.',
+    url: 'https://workspace-x402-paywall.onrender.com',
+    base_url: 'https://workspace-x402-paywall.onrender.com',
+    protocols: ['x402', 'mpp'],
+    networks: ['base', 'solana', 'tempo'],
+    links: {
+      x402: 'https://workspace-x402-paywall.onrender.com/.well-known/x402.json',
+      openapi: 'https://workspace-x402-paywall.onrender.com/openapi.json',
+    },
+  });
 });
 
 // HEAD guard (must sit before the paywall): @x402/express <=2.28.0 did not
@@ -2278,8 +2296,8 @@ const OUTPUT_EXAMPLES = {
   '/ai/image': { image_url: 'https://example.com/generated-image.png' },
   '/ai/models': { models: [{ id: 'openai-fast', type: 'text' }] },
   '/ping': { status: 'ok', timestamp: '2026-10-22T00:00:00.000Z' },
-  '/solana/audit': { mint: 'So11111111111111111111111111111111111111112', risk: 'low', checks: { mint_authority: null, freeze_authority: null } },
-  '/scrape': { url: 'https://example.com', text: 'Example Domain' },
+  '/solana/audit': { token: 'So11111111111111111111111111111111111111112', risk_score: 8, risk_level: 'low', risks: [] },
+  '/scrape': { source_url: 'https://example.com/article', title: 'Example Article', content_length: 1834, markdown: '# Example Article\n\nFirst paragraph of the extracted article text.' },
   '/brief/full': { bundle: 'full', topic: 'fed', as_of: '2026-10-28T14:00:00.000Z', price_usd: 0.05, standalone_total_usd: 0.09, components: { topic_brief: { topic: 'fed', prediction_markets: { polymarket: [], kalshi: [] }, company: null, crypto: null, context: null }, market_brief: { as_of: '2026-10-28T14:00:00.000Z', fear_greed: { value: 32, classification: 'Fear' }, crypto: [], trending_predictions: [], top_cross_venue_gap: null }, sol_spread: { asset: 'SOL', widest_spread: { gross_bps: 38.2, est_net_bps: 31.7 } }, markets_expiring_soon: { window_hours: 48, count: 0, expiring: [] } }, note: 'One-call bundle: topic brief + market brief + SOL spread + expiring markets.' },
   '/brief/pack': { pack: 'mid', topic: 'fed', as_of: '2026-10-28T14:00:00.000Z', price_usd: 0.025, standalone_total_usd: 0.07, components: { topic_brief: { topic: 'fed', prediction_markets: { polymarket: [], kalshi: [] }, company: null, crypto: null, context: null }, markets_expiring_soon: { window_hours: 48, count: 0, expiring: [] }, sol_spread: { asset: 'SOL', widest_spread: { gross_bps: 38.2, est_net_bps: 31.7 } } }, note: 'Mid-tier pack: topic brief + expiring markets + SOL spread.' },
   '/portfolio/generate': { price_usd: 0.05, risk: 'balanced', amount: 1000, generated_at: '2026-10-28T14:00:00.000Z', allocations: [{ asset: 'BTC', weight_pct: 30.12, amount_usd: 301.2, spot_price: 80250, vol_7d_hourly: 0.0021 }, { asset: 'ETH', weight_pct: 21.44, amount_usd: 214.4, spot_price: 2362, vol_7d_hourly: 0.003 }, { asset: 'SOL', weight_pct: 18.44, amount_usd: 184.4, spot_price: 188.4, vol_7d_hourly: 0.0035 }, { asset: 'USDC', weight_pct: 30, amount_usd: 300, spot_price: 1, vol_7d_hourly: 0 }], method: 'inverse-volatility weighting within risk template; 7d hourly realized vol', notes: ['Rebalance when any allocation drifts more than 5 percentage points from its target weight, or monthly, whichever comes first.', 'Mechanical generator, not financial advice.'] },
@@ -2297,6 +2315,29 @@ const OUTPUT_EXAMPLES = {
   '/predict/trending': { trending: [{ venue: 'polymarket', title: '2028 Presidential Election', slug: '2028-presidential-election', volume: 52341000, volume24hr: 812300, markets: [{ subject: 'Democratic Party', q: 'Will the Democratic Party win the 2028 presidential election?', outcomes: ['Yes', 'No'], yes: '0.52', no: '0.48' }] }, { venue: 'kalshi', title: '2028 Presidential Election Winner', sub: 'Winner of the 2028 US presidential election', series: 'KXPRESPARTY', markets: [{ outcome: 'Democratic Party', last: '0.51', yes_bid: '0.50', yes_ask: '0.52', volume: '1823456', close: '2028-11-07T15:00:00.000Z' }] }] },
   '/predict/search': { query: 'fed', polymarket: [{ title: 'Fed Decision in December?', slug: 'fed-decision-in-december', volume: 15234000, volume24hr: 640200, markets: [{ subject: 'Rate cut', q: 'Will the Fed cut rates in December?', outcomes: ['Yes', 'No'], yes: '0.68', no: '0.32' }] }], kalshi: [{ title: 'Fed funds rate after the December meeting', sub: 'Upper bound of the target range', series: 'KXFEDEND', markets: [{ outcome: 'Above 4.00%', last: '0.66', yes_bid: '0.65', yes_ask: '0.67', volume: '842100', close: '2026-12-10T19:00:00.000Z' }] }] },
   '/polymarket/elections': [{ title: '2028 Presidential Election', slug: '2028-presidential-election', volume: 52341000, volume24hr: 812300, markets: [{ subject: 'Democratic Party', q: 'Will the Democratic Party win the 2028 presidential election?', outcomes: ['Yes', 'No'], yes: '0.52', no: '0.48' }] }],
+  '/utils/ip': { ip: '203.0.113.42' },
+  '/utils/uuid': { count: 3, uuids: ['9b1deb4d-3b7d-4bad-9bdd-2b0d7b3dcb6d', '1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed', '6ec0bd7f-ff2c-4c1a-b5e1-8f6f2b1a0c3d'] },
+  '/utils/base64': { op: 'encode', input: 'hello agents', output: 'aGVsbG8gYWdlbnRz' },
+  '/utils/hash': { algo: 'sha256', input: 'hello agents', output: 'ecd84446a86771183e6b03a8e46d9ac2dc141ab17bfa5776fe86d031f27434cf' },
+  '/utils/time': { unix: 1793196000, unix_ms: 1793196000000, iso8601: '2026-10-28T14:00:00.000Z' },
+  '/scrape/pdf': { source_url: 'https://example.com/report.pdf', pages: 12, chars: 48210, text: 'Executive summary: revenue grew 12% year over year, driven by subscription growth across all regions.' },
+  '/lookup/pypi': { query: 'requests', source: 'pypi', items: [{ name: 'requests', version: '2.32.3', summary: 'Python HTTP for Humans.' }] },
+  '/food/search': [{ name: 'Nutella', brand: 'Ferrero', nutriscore: 'e' }],
+  '/search/github': { query: 'x402', type: 'repositories', total_count: 128, returned: 1, items: [{ name: 'coinbase/x402', url: 'https://github.com/coinbase/x402', description: 'A payments protocol for the internet built on HTTP 402', stars: 1250, updated: '2026-10-20T00:00:00Z' }] },
+  '/stocks/price': { symbol: 'AAPLx', underlying: 'AAPL', chain: 'solana', dex: 'raydium', price_usd: '262.41', price_change_24h: 1.24, volume_24h: 845213.55, liquidity_usd: 3120450.12, pair_address: 'pair-address', found: true },
+  '/search/fda': { query: 'ibuprofen', source: 'openfda', items: [{ brand: 'Advil', generic: 'IBUPROFEN', manufacturer: 'Wyeth Pharmaceuticals Inc.' }] },
+  '/search/geo': { query: '350 5th Ave, New York, NY', source: 'openstreetmap', items: [{ name: 'Empire State Building, 350, 5th Avenue, Manhattan, New York, NY 10118, United States', lat: '40.7484405', lon: '-73.9856644' }] },
+  '/search/hn': { query: 'ai agents', source: 'hackernews', items: [{ title: 'Show HN: An agent framework in Rust', url: 'https://example.com/post', points: 142, comments: 87 }] },
+  '/search/sec': { query: 'Apple 10-K', source: 'sec-edgar', items: [{ form: '10-K', filed: '2025-10-31', accession: '0000320193-25-000108' }] },
+  '/search/arxiv': { query: 'diffusion models', source: 'arxiv', items: [{ title: 'Denoising Diffusion Probabilistic Models', id: 'http://arxiv.org/abs/2006.11239v2', published: '2020-06-19T17:31:15Z', summary: 'We present high quality image synthesis results using diffusion probabilistic models, a class of latent variable models inspired by considerations from nonequilibrium thermodynamics.' }] },
+  '/search/wikipedia': { query: 'bitcoin', source: 'wikipedia', items: [{ title: 'Bitcoin', snippet: 'Bitcoin is a decentralized digital currency that enables instant payments to any person in the world.' }] },
+  '/search/npm': { query: 'express', source: 'npm', items: [{ name: 'express', version: '4.21.2', description: 'Fast, unopinionated, minimalist web framework for Node.js' }] },
+  '/ref/holidays': [{ date: '2026-01-01', name: "New Year's Day", local: "New Year's Day" }, { date: '2026-07-04', name: 'Independence Day', local: 'Independence Day' }],
+  '/geo/elevation': { elevation_m: 512.3 },
+  '/geo/zip': { country: 'United States', places: [{ name: 'Beverly Hills', state: 'California', lat: '34.0901', lon: '-118.4065' }] },
+  '/fx/convert': { from: 'EUR', to: 'USD', amount: 100, rate: 1.08, result: 108 },
+  '/fx/rates': { base: 'USD', date: '2026-10-28', rates: { EUR: 0.925, GBP: 0.789, JPY: 152.34 } },
+  '/crypto/ohlcv': [{ time: '2026-10-28T00:00:00Z', open: 80210.5, high: 81540.0, low: 79820.3, close: 81230.8, volume: 182345678.9 }],
 };
 function exampleForPath(p) {
   if (OUTPUT_EXAMPLES[p]) return OUTPUT_EXAMPLES[p];
@@ -2395,42 +2436,42 @@ const PAYWALL_CFG = withMeta({
     },
     'GET /search/npm': {
       accepts: acceptsFor(PRICE),
-      description: 'Returns a JSON array of npm packages matching the query string',
+      description: 'Searches the npm registry by keyword and returns matching packages with name, version and description - dependency and library research for coding agents',
       extensions: bazaarExt([{ n: 'q', req: true, d: 'Search query string (e.g. express, react, typescript)' }]),
     },
     'GET /search/wikipedia': {
       accepts: acceptsFor(PRICE),
-      description: 'Returns a JSON array of Wikipedia articles matching the query string',
+      description: 'Searches Wikipedia by keyword and returns matching article titles with text snippets - quick encyclopedia context for research and RAG agents',
       extensions: bazaarExt([{ n: 'q', req: true, d: 'Search query string (e.g. bitcoin, roman empire, marie curie)' }]),
     },
     'GET /search/arxiv': {
       accepts: acceptsFor(PRICE),
-      description: 'Returns a JSON array of arXiv papers matching the query string',
+      description: 'Searches arXiv by keyword and returns matching papers with title, arXiv ID, publication date and abstract - literature lookup for research agents',
       extensions: bazaarExt([{ n: 'q', req: true, d: 'Search query string (e.g. transformers, diffusion models, CRISPR)' }]),
     },
     'GET /search/sec': {
       accepts: acceptsFor(PRICE),
-      description: 'Returns a JSON array of SEC EDGAR filings matching the query string',
+      description: 'Searches SEC EDGAR full-text by keyword and returns matching filings with form type, filing date and accession number - filing discovery for finance and compliance agents',
       extensions: bazaarExt([{ n: 'q', req: true, d: 'Search query string (e.g. Apple, revenue recognition, 10-K)' }]),
     },
     'GET /search/hn': {
       accepts: acceptsFor(PRICE),
-      description: 'Returns a JSON array of Hacker News posts matching the query string',
+      description: 'Searches Hacker News by keyword and returns matching stories with URL, points and comment count - tech-trend and community-signal research',
       extensions: bazaarExt([{ n: 'q', req: true, d: 'Search query string (e.g. rust, startups, ai agents)' }]),
     },
     'GET /search/geo': {
       accepts: acceptsFor(PRICE),
-      description: 'Converts a street address string to a JSON object with latitude, longitude, and formatted address via OpenStreetMap',
+      description: 'Geocodes an address or place name via OpenStreetMap and returns up to 5 matches with formatted address and latitude/longitude - turn free-text locations into coordinates',
       extensions: bazaarExt([{ n: 'q', req: true, d: 'Street address or place name string (e.g. 350 5th Ave, New York, NY)' }]),
     },
     'GET /lookup/pypi': {
       accepts: acceptsFor(PRICE),
-      description: 'Returns a JSON object with metadata for a PyPI package name',
+      description: 'Looks up a PyPI package by exact name and returns its current version and summary - dependency checks for Python coding agents',
       extensions: bazaarExt([{ n: 'package', req: true, d: 'PyPI package name string (e.g. requests, numpy, pandas)' }]),
     },
     'GET /search/fda': {
       accepts: acceptsFor(PRICE),
-      description: 'Returns a JSON array of FDA drug labels matching the query string',
+      description: 'Searches FDA drug labels (openFDA) by drug name or keyword and returns matches with brand name, generic name and manufacturer - drug-label lookup for health research agents',
       extensions: bazaarExt([{ n: 'q', req: true, d: 'Drug name or label search string (e.g. ibuprofen, ozempic, metformin)' }]),
     },
     'GET /pump/chains': {
@@ -2465,7 +2506,7 @@ const PAYWALL_CFG = withMeta({
     },
     'GET /stocks/price': {
       accepts: acceptsFor(PRICE),
-      description: 'Returns a JSON object with live price quote for a tokenized stock symbol',
+      description: 'Live quote for a tokenized stock (xStocks such as AAPLx, NVDAx, TSLAx): USD price, 24h change, 24h volume and liquidity from the most active DEX pair, with the chain and DEX named - tokenized-equity pricing without a brokerage feed',
       extensions: bazaarExt([{ n: 'symbol', req: true, d: 'Tokenized stock symbol (e.g. AAPLx, NVDAx, TSLAx)' }]),
     },
     'GET /meme/trending': {
@@ -2485,7 +2526,7 @@ const PAYWALL_CFG = withMeta({
     },
     'GET /search/github': {
       accepts: acceptsFor(PRICE),
-      description: 'Returns a JSON array of GitHub repositories, code, users, or issues matching the query',
+      description: 'Searches GitHub repositories, code, users or issues by keyword and returns matches with URL, description, stars and last-updated date, plus the total match count - code discovery for developer agents',
       extensions: bazaarExt([{ n: 'q', req: true, d: 'Search query string (e.g. x402, langchain, react)' }]),
     },
     'GET /scrape': {
@@ -2495,21 +2536,21 @@ const PAYWALL_CFG = withMeta({
     },
     'GET /whale-watch': {
       accepts: acceptsFor(ALPHA_PRICE),
-      description: 'Returns a JSON array of recent token swap transactions for a Solana wallet address',
+      description: 'Returns the most recent swaps of any Solana wallet - timestamp, transaction signature, a plain-language description of each swap and the network fee - for copy-trading screens, whale tracking and wallet forensics',
       extensions: bazaarExt([
-        { n: 'wallet', req: true, d: 'Requires a valid 32-44 character base58 Solana wallet address' },
-        { n: 'limit', req: false, d: 'Integer 1-20, number of swaps to return (default 5)' },
+        { n: 'wallet', req: true, d: 'Requires a valid 32-44 character base58 Solana wallet address', def: 'E21AWkUtLz4BP7AaT82CF7v86Kmv4YzN4NAR1FQnEmqy' },
+        { n: 'limit', req: false, d: 'Integer 1-20, number of swaps to return (default 5)', def: '5' },
       ]),
     },
     'GET /kalshi/elections': {
       accepts: acceptsFor(PRICE),
       description: 'Returns a JSON object with Kalshi US election market events: the 2028 presidential party-winner series and the House-majority series, with prices in dollars (implied probability) and volume',
-      extensions: bazaarExt([{ n: 'limit', req: false, d: 'Integer 1-20, number of events per series (default 5)' }]),
+      extensions: bazaarExt([{ n: 'limit', req: false, d: 'Integer 1-20, number of events per series (default 5)', def: '5' }]),
     },
     'GET /polymarket/elections': {
       accepts: acceptsFor(PRICE),
       description: 'Returns a JSON array of live Polymarket US election events (elections, 2026 midterms, House races) deduplicated across tags, sorted by volume, with odds per market',
-      extensions: bazaarExt([{ n: 'limit', req: false, d: 'Integer 1-25, number of events to return (default 10)' }]),
+      extensions: bazaarExt([{ n: 'limit', req: false, d: 'Integer 1-25, number of events to return (default 10)', def: '10' }]),
     },
     'GET /predict/trending': {
       accepts: acceptsFor(PRICE),
@@ -2519,7 +2560,7 @@ const PAYWALL_CFG = withMeta({
     'GET /predict/search': {
       accepts: acceptsFor(PRICE),
       description: 'Searches live prediction markets on both Polymarket and Kalshi by keyword and returns matching events with odds from both venues in one call',
-      extensions: bazaarExt([{ n: 'q', req: true, d: 'Search keyword string (e.g. trump, senate, fed, shutdown)' }]),
+      extensions: bazaarExt([{ n: 'q', req: true, d: 'Search keyword string (e.g. trump, senate, fed, shutdown)', def: 'fed' }]),
     },
     'GET /predict/spread': {
       accepts: acceptsFor(PRICE),
@@ -2534,22 +2575,22 @@ const PAYWALL_CFG = withMeta({
     'GET /markets/expiring-soon': {
       accepts: acceptsFor('$0.015'),
       description: 'Returns prediction markets on Polymarket and Kalshi closing inside a time window (default 48 hours), soonest first, with live Yes prices, volume, hours to close, and a near_boundary flag for contracts priced at or above 0.95 or at or below 0.05 - a resolution radar for prediction-market agents',
-      extensions: bazaarExt([{ n: 'hours', req: false, d: 'Integer 1-168, look-ahead window in hours (default 48)' }, { n: 'limit', req: false, d: 'Integer 1-50, max markets to return (default 20)' }]),
+      extensions: bazaarExt([{ n: 'hours', req: false, d: 'Integer 1-168, look-ahead window in hours (default 48)', def: '48' }, { n: 'limit', req: false, d: 'Integer 1-50, max markets to return (default 20)', def: '20' }]),
     },
     'GET /brief/topic': {
       accepts: acceptsFor(ALPHA_PRICE),
       description: 'One-call topic brief for agents: live prediction-market prices for the topic on Polymarket and Kalshi, the SEC EDGAR company record when the topic is a listed company, a spot price when the topic is a major crypto asset, and a short encyclopedia context - replaces a search session with a single call',
-      extensions: bazaarExt([{ n: 'q', req: true, d: 'Topic keyword or ticker (e.g. fed, trump, NVDA, bitcoin)' }]),
+      extensions: bazaarExt([{ n: 'q', req: true, d: 'Topic keyword or ticker (e.g. fed, trump, NVDA, bitcoin)', def: 'fed' }]),
     },
     'GET /brief/full': {
       accepts: acceptsFor(BUNDLE_PRICE),
       description: 'Full market bundle for agents: the complete topic brief (prediction markets on Polymarket and Kalshi, SEC EDGAR company record, crypto spot price, short context), the one-call market brief (BTC/ETH/SOL spot with 24h change, Fear & Greed index, trending prediction markets, widest verified cross-venue gap), the live SOL CEX/DEX spread snapshot, and prediction markets expiring in the next 48 hours - four calls in one, at one $0.05 price',
-      extensions: bazaarExt([{ n: 'q', req: true, d: 'Topic keyword or ticker (e.g. fed, trump, NVDA, bitcoin)' }]),
+      extensions: bazaarExt([{ n: 'q', req: true, d: 'Topic keyword or ticker (e.g. fed, trump, NVDA, bitcoin)', def: 'fed' }]),
     },
     'GET /brief/pack': {
       accepts: acceptsFor(PACK_PRICE),
       description: 'Mid-tier market pack for agents: the complete topic brief (prediction markets on Polymarket and Kalshi, SEC EDGAR company record, crypto spot price, short context), prediction markets expiring in the next 48 hours, and the live SOL CEX/DEX spread snapshot - three calls in one, at one $0.025 price',
-      extensions: bazaarExt([{ n: 'q', req: true, d: 'Topic keyword or ticker (e.g. fed, trump, NVDA, bitcoin)' }]),
+      extensions: bazaarExt([{ n: 'q', req: true, d: 'Topic keyword or ticker (e.g. fed, trump, NVDA, bitcoin)', def: 'fed' }]),
     },
     'GET /portfolio/generate': {
       accepts: acceptsFor(PORTFOLIO_PRICE),
@@ -2569,12 +2610,12 @@ const PAYWALL_CFG = withMeta({
     'GET /solana/token-holders': {
       accepts: acceptsFor(PRICE),
       description: 'Returns a JSON object with the top 20 holders of a Solana token mint, each with amount and percent of supply, plus top-10 and top-20 concentration percentages',
-      extensions: bazaarExt([{ n: 'mint', req: true, d: 'Requires a valid 32-44 character base58 Solana token mint address' }]),
+      extensions: bazaarExt([{ n: 'mint', req: true, d: 'Requires a valid 32-44 character base58 Solana token mint address', def: 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v' }]),
     },
     'GET /markets/fear-greed': {
       accepts: acceptsFor(PRICE),
       description: 'Returns a JSON object with the current Crypto Fear and Greed Index value (0-100), classification and timestamp',
-      extensions: bazaarExt([{ n: 'days', req: false, d: 'Integer 1-7, include that many recent daily readings (default 1)' }]),
+      extensions: bazaarExt([{ n: 'days', req: false, d: 'Integer 1-7, include that many recent daily readings (default 1)', def: '1' }]),
     },
     'GET /defi/stablecoins': {
       accepts: acceptsFor(PRICE),
@@ -2619,27 +2660,27 @@ const PAYWALL_CFG = withMeta({
     // ---- pay-per-call utilities (zero marginal cost, X Pay-style) ----
     'GET /utils/base64': {
       accepts: acceptsFor(UTILS_PRICE),
-      description: 'Encodes text to base64 or decodes base64 to text, returns a JSON object with the result string',
+      description: 'Encodes text to base64 or decodes base64 back to text and returns the result string - payload encoding/decoding for agents without local shell tooling',
       extensions: bazaarExt(),
     },
     'GET /utils/hash': {
       accepts: acceptsFor(UTILS_PRICE),
-      description: 'Computes a cryptographic hash of input text, returns a JSON object with the hex digest string',
+      description: 'Computes a cryptographic hash (sha256, sha512, sha1 or md5) of input text and returns the hex digest - checksums and content fingerprinting for agents without local tooling',
       extensions: bazaarExt(),
     },
     'GET /utils/uuid': {
       accepts: acceptsFor(UTILS_PRICE),
-      description: 'Generates random UUID v4 values, returns a JSON array of UUID strings',
+      description: 'Generates random UUID v4 values (1-100 per call) and returns them in a JSON object with the count and the uuids array - unique IDs for records, sessions and idempotency keys',
       extensions: bazaarExt(),
     },
     'GET /utils/ip': {
       accepts: acceptsFor(UTILS_PRICE),
-      description: 'Returns a JSON object with the caller IP address as a string',
+      description: 'Returns the public IP address of the caller as seen by the server - egress-IP checks for agents running behind proxies or VPNs',
       extensions: bazaarExt(),
     },
     'GET /utils/time': {
       accepts: acceptsFor(UTILS_PRICE),
-      description: 'Returns a JSON object with the current Unix timestamp integer and ISO 8601 time string',
+      description: 'Returns the current server time as a Unix timestamp (seconds and milliseconds) and an ISO 8601 string - a trusted external clock for scheduling, expiry checks and log correlation',
       extensions: bazaarExt(),
     },
     'GET /ping': {
@@ -4143,7 +4184,7 @@ app.get('/openapi.json', (req, res) => res.json({
     '/utils/base64': {
       get: {
         operationId: 'base64Util',
-        summary: 'Encodes text to base64 or decodes base64 to text, returns a JSON object with the result string',
+        summary: 'Encodes text to base64 or decodes base64 back to text and returns the result string - payload encoding/decoding for agents without local shell tooling',
         tags: ['Utilities'],
         'x-payment-info': { price: { mode: 'fixed', currency: 'USD', amount: '0.001000' }, protocols: [{ x402: {} }] },
         parameters: [
@@ -4160,7 +4201,7 @@ app.get('/openapi.json', (req, res) => res.json({
     '/utils/hash': {
       get: {
         operationId: 'hashUtil',
-        summary: 'Computes a cryptographic hash of input text, returns a JSON object with the hex digest string',
+        summary: 'Computes a cryptographic hash (sha256, sha512, sha1 or md5) of input text and returns the hex digest - checksums and content fingerprinting for agents without local tooling',
         tags: ['Utilities'],
         'x-payment-info': { price: { mode: 'fixed', currency: 'USD', amount: '0.001000' }, protocols: [{ x402: {} }] },
         parameters: [
@@ -4176,7 +4217,7 @@ app.get('/openapi.json', (req, res) => res.json({
     '/utils/uuid': {
       get: {
         operationId: 'uuidUtil',
-        summary: 'Generates random UUID v4 values, returns a JSON array of UUID strings',
+        summary: 'Generates random UUID v4 values (1-100 per call) and returns them in a JSON object with the count and the uuids array - unique IDs for records, sessions and idempotency keys',
         tags: ['Utilities'],
         'x-payment-info': { price: { mode: 'fixed', currency: 'USD', amount: '0.001000' }, protocols: [{ x402: {} }] },
         parameters: [
@@ -4191,7 +4232,7 @@ app.get('/openapi.json', (req, res) => res.json({
     '/utils/ip': {
       get: {
         operationId: 'ipEcho',
-        summary: 'Returns a JSON object with the caller IP address as a string',
+        summary: 'Returns the public IP address of the caller as seen by the server - egress-IP checks for agents running behind proxies or VPNs',
         tags: ['Utilities'],
         'x-payment-info': { price: { mode: 'fixed', currency: 'USD', amount: '0.001000' }, protocols: [{ x402: {} }] },
         parameters: [
@@ -4206,7 +4247,7 @@ app.get('/openapi.json', (req, res) => res.json({
     '/utils/time': {
       get: {
         operationId: 'timeUtil',
-        summary: 'Returns a JSON object with the current Unix timestamp integer and ISO 8601 time string',
+        summary: 'Returns the current server time as a Unix timestamp (seconds and milliseconds) and an ISO 8601 string - a trusted external clock for scheduling, expiry checks and log correlation',
         tags: ['Utilities'],
         'x-payment-info': { price: { mode: 'fixed', currency: 'USD', amount: '0.001000' }, protocols: [{ x402: {} }] },
         parameters: [
@@ -4381,7 +4422,7 @@ app.get('/openapi.json', (req, res) => res.json({
     '/search/npm': {
       get: {
         operationId: 'npmSearch',
-        summary: 'Returns a JSON array of npm packages matching the query string',
+        summary: 'Searches the npm registry by keyword and returns matching packages with name, version and description - dependency and library research for coding agents',
         tags: ['Search'],
         'x-payment-info': { price: { mode: 'fixed', currency: 'USD', amount: '0.005000' }, protocols: [{ x402: {} }] },
         parameters: [
@@ -4396,7 +4437,7 @@ app.get('/openapi.json', (req, res) => res.json({
     '/search/wikipedia': {
       get: {
         operationId: 'wikipediaSearch',
-        summary: 'Returns a JSON array of Wikipedia articles matching the query string',
+        summary: 'Searches Wikipedia by keyword and returns matching article titles with text snippets - quick encyclopedia context for research and RAG agents',
         tags: ['Search'],
         'x-payment-info': { price: { mode: 'fixed', currency: 'USD', amount: '0.005000' }, protocols: [{ x402: {} }] },
         parameters: [
@@ -4411,7 +4452,7 @@ app.get('/openapi.json', (req, res) => res.json({
     '/search/arxiv': {
       get: {
         operationId: 'arxivSearch',
-        summary: 'Returns a JSON array of arXiv papers matching the query string',
+        summary: 'Searches arXiv by keyword and returns matching papers with title, arXiv ID, publication date and abstract - literature lookup for research agents',
         tags: ['Search'],
         'x-payment-info': { price: { mode: 'fixed', currency: 'USD', amount: '0.005000' }, protocols: [{ x402: {} }] },
         parameters: [
@@ -4426,7 +4467,7 @@ app.get('/openapi.json', (req, res) => res.json({
     '/search/sec': {
       get: {
         operationId: 'secSearch',
-        summary: 'Returns a JSON array of SEC EDGAR filings matching the query string',
+        summary: 'Searches SEC EDGAR full-text by keyword and returns matching filings with form type, filing date and accession number - filing discovery for finance and compliance agents',
         tags: ['Search'],
         'x-payment-info': { price: { mode: 'fixed', currency: 'USD', amount: '0.005000' }, protocols: [{ x402: {} }] },
         parameters: [
@@ -4441,7 +4482,7 @@ app.get('/openapi.json', (req, res) => res.json({
     '/search/hn': {
       get: {
         operationId: 'hnSearch',
-        summary: 'Returns a JSON array of Hacker News posts matching the query string',
+        summary: 'Searches Hacker News by keyword and returns matching stories with URL, points and comment count - tech-trend and community-signal research',
         tags: ['Search'],
         'x-payment-info': { price: { mode: 'fixed', currency: 'USD', amount: '0.005000' }, protocols: [{ x402: {} }] },
         parameters: [
@@ -4456,7 +4497,7 @@ app.get('/openapi.json', (req, res) => res.json({
     '/search/geo': {
       get: {
         operationId: 'geoSearch',
-        summary: 'Converts a street address string to a JSON object with latitude, longitude, and formatted address via OpenStreetMap',
+        summary: 'Geocodes an address or place name via OpenStreetMap and returns up to 5 matches with formatted address and latitude/longitude - turn free-text locations into coordinates',
         tags: ['Search'],
         'x-payment-info': { price: { mode: 'fixed', currency: 'USD', amount: '0.005000' }, protocols: [{ x402: {} }] },
         parameters: [
@@ -4471,7 +4512,7 @@ app.get('/openapi.json', (req, res) => res.json({
     '/lookup/pypi': {
       get: {
         operationId: 'pypiLookup',
-        summary: 'Returns a JSON object with metadata for a PyPI package name',
+        summary: 'Looks up a PyPI package by exact name and returns its current version and summary - dependency checks for Python coding agents',
         tags: ['Search'],
         'x-payment-info': { price: { mode: 'fixed', currency: 'USD', amount: '0.005000' }, protocols: [{ x402: {} }] },
         parameters: [
@@ -4486,7 +4527,7 @@ app.get('/openapi.json', (req, res) => res.json({
     '/search/fda': {
       get: {
         operationId: 'fdaSearch',
-        summary: 'Returns a JSON array of FDA drug labels matching the query string',
+        summary: 'Searches FDA drug labels (openFDA) by drug name or keyword and returns matches with brand name, generic name and manufacturer - drug-label lookup for health research agents',
         tags: ['Search'],
         'x-payment-info': { price: { mode: 'fixed', currency: 'USD', amount: '0.005000' }, protocols: [{ x402: {} }] },
         parameters: [
@@ -4593,7 +4634,7 @@ app.get('/openapi.json', (req, res) => res.json({
     '/stocks/price': {
       get: {
         operationId: 'stocksPrice',
-        summary: 'Returns a JSON object with live price quote for a tokenized stock symbol',
+        summary: 'Live quote for a tokenized stock (xStocks such as AAPLx, NVDAx, TSLAx): USD price, 24h change, 24h volume and liquidity from the most active DEX pair, with the chain and DEX named - tokenized-equity pricing without a brokerage feed',
         tags: ['Stocks'],
         'x-payment-info': { price: { mode: 'fixed', currency: 'USD', amount: '0.005000' }, protocols: [{ x402: {} }] },
         parameters: [
@@ -4654,7 +4695,7 @@ app.get('/openapi.json', (req, res) => res.json({
     '/search/github': {
       get: {
         operationId: 'githubSearch',
-        summary: 'Returns a JSON array of GitHub repositories, code, users, or issues matching the query',
+        summary: 'Searches GitHub repositories, code, users or issues by keyword and returns matches with URL, description, stars and last-updated date, plus the total match count - code discovery for developer agents',
         tags: ['Search'],
         'x-payment-info': { price: { mode: 'fixed', currency: 'USD', amount: '0.005000' }, protocols: [{ x402: {} }] },
         parameters: [
@@ -4891,7 +4932,7 @@ app.get('/openapi.json', (req, res) => res.json({
     '/whale-watch': {
       get: {
         operationId: 'whaleWatch',
-        summary: 'Returns a JSON array of recent token swap transactions for a Solana wallet address',
+        summary: 'Returns the most recent swaps of any Solana wallet - timestamp, transaction signature, a plain-language description of each swap and the network fee - for copy-trading screens, whale tracking and wallet forensics',
         tags: ['Crypto'],
         'x-payment-info': { price: { mode: 'fixed', currency: 'USD', amount: '0.050000' }, protocols: [{ x402: {} }] },
         parameters: [
@@ -5019,12 +5060,12 @@ app.get('/.well-known/x402.json', (req, res) => {
       ...buildMasterX402eps(ep),
       ...buildVerifyX402eps(ep),
       ...buildUtilsX402eps(ep),
-      ep('/utils/base64', 'Encodes text to base64 or decodes base64 to text, returns a JSON object with the result string', UTILS_PRICE),
-      ep('/utils/hash', 'Computes a cryptographic hash of input text, returns a JSON object with the hex digest string', UTILS_PRICE),
-      ep('/utils/uuid', 'Generates random UUID v4 values, returns a JSON array of UUID strings', UTILS_PRICE),
-      ep('/utils/ip', 'Returns a JSON object with the caller IP address as a string', UTILS_PRICE),
+      ep('/utils/base64', 'Encodes text to base64 or decodes base64 back to text and returns the result string - payload encoding/decoding for agents without local shell tooling', UTILS_PRICE),
+      ep('/utils/hash', 'Computes a cryptographic hash (sha256, sha512, sha1 or md5) of input text and returns the hex digest - checksums and content fingerprinting for agents without local tooling', UTILS_PRICE),
+      ep('/utils/uuid', 'Generates random UUID v4 values (1-100 per call) and returns them in a JSON object with the count and the uuids array - unique IDs for records, sessions and idempotency keys', UTILS_PRICE),
+      ep('/utils/ip', 'Returns the public IP address of the caller as seen by the server - egress-IP checks for agents running behind proxies or VPNs', UTILS_PRICE),
       ep('/ping', 'Health check endpoint for x402 payment flow testing: returns a JSON object with service status and the current server timestamp', UTILS_PRICE),
-      ep('/utils/time', 'Returns a JSON object with the current Unix timestamp integer and ISO 8601 time string', UTILS_PRICE),
+      ep('/utils/time', 'Returns the current server time as a Unix timestamp (seconds and milliseconds) and an ISO 8601 string - a trusted external clock for scheduling, expiry checks and log correlation', UTILS_PRICE),
       ep('/spread/base', 'Returns a JSON object with live cross-DEX spreads on Base for a token (default WETH): prices from the top 5 Base DEXs plus the widest spread detected', PRICE),
       ep('/chain/balance', 'Returns a JSON object with the native ETH balance of a Base address', CHAIN_PRICE),
       ep('/chain/erc20-balance', 'Returns a JSON object with the ERC-20 token balance of a Base address', CHAIN_PRICE),
@@ -5033,29 +5074,29 @@ app.get('/.well-known/x402.json', (req, res) => {
       ep('/chain/spl-balance', 'Returns a JSON object with SPL token balances for a Solana wallet and mint', CHAIN_PRICE),
       ep('/chain/slot', 'Returns a JSON object with the current Solana slot', UTILS_PRICE),
       ep('/spread', 'Live SOL prices from the top 5 centralized exchanges and top 5 Solana DEXs with the widest bid-ask spread, in gross and estimated net basis points - for arbitrage screening, price discovery and execution checks', PRICE),
-      ep('/search/npm', 'Returns a JSON array of npm packages matching the query string', PRICE),
-      ep('/search/wikipedia', 'Returns a JSON array of Wikipedia articles matching the query string', PRICE),
-      ep('/search/arxiv', 'Returns a JSON array of arXiv papers matching the query string', PRICE),
-      ep('/search/sec', 'Returns a JSON array of SEC EDGAR filings matching the query string', PRICE),
-      ep('/search/hn', 'Returns a JSON array of Hacker News posts matching the query string', PRICE),
-      ep('/search/geo', 'Converts a street address string to a JSON object with latitude, longitude, and formatted address via OpenStreetMap', PRICE),
-      ep('/lookup/pypi', 'Returns a JSON object with metadata for a PyPI package name', PRICE),
-      ep('/search/fda', 'Returns a JSON array of FDA drug labels matching the query string', PRICE),
+      ep('/search/npm', 'Searches the npm registry by keyword and returns matching packages with name, version and description - dependency and library research for coding agents', PRICE),
+      ep('/search/wikipedia', 'Searches Wikipedia by keyword and returns matching article titles with text snippets - quick encyclopedia context for research and RAG agents', PRICE),
+      ep('/search/arxiv', 'Searches arXiv by keyword and returns matching papers with title, arXiv ID, publication date and abstract - literature lookup for research agents', PRICE),
+      ep('/search/sec', 'Searches SEC EDGAR full-text by keyword and returns matching filings with form type, filing date and accession number - filing discovery for finance and compliance agents', PRICE),
+      ep('/search/hn', 'Searches Hacker News by keyword and returns matching stories with URL, points and comment count - tech-trend and community-signal research', PRICE),
+      ep('/search/geo', 'Geocodes an address or place name via OpenStreetMap and returns up to 5 matches with formatted address and latitude/longitude - turn free-text locations into coordinates', PRICE),
+      ep('/lookup/pypi', 'Looks up a PyPI package by exact name and returns its current version and summary - dependency checks for Python coding agents', PRICE),
+      ep('/search/fda', 'Searches FDA drug labels (openFDA) by drug name or keyword and returns matches with brand name, generic name and manufacturer - drug-label lookup for health research agents', PRICE),
       ep('/pump/chains', 'Returns a JSON array of 100+ supported blockchain chain identifiers for meme token endpoints', PRICE),
       ep('/pump/new', 'Returns a JSON array of newly launched meme tokens with price and market cap data', PRICE),
       ep('/pump/trending', 'Returns a JSON array of trending meme coin liquidity pools on the specified chain', PRICE),
       ep('/pump/migrating', 'Returns a JSON array of pump.fun tokens approaching Raydium migration threshold, sorted by migration progress percentage', PRICE),
       ep('/solana/top100', 'Returns a JSON array of the top 100 Solana tokens by market cap with prices in USD and SOL', PRICE),
       ep('/stocks/list', 'Returns a JSON array of tokenized stocks with live prices', PRICE),
-      ep('/stocks/price', 'Returns a JSON object with live price quote for a tokenized stock symbol', PRICE),
+      ep('/stocks/price', 'Live quote for a tokenized stock (xStocks such as AAPLx, NVDAx, TSLAx): USD price, 24h change, 24h volume and liquidity from the most active DEX pair, with the chain and DEX named - tokenized-equity pricing without a brokerage feed', PRICE),
       ep('/meme/trending', 'Returns a JSON array of trending meme coin liquidity pools on the specified chain', PRICE),
       ep('/meme/new', 'Returns a JSON array of newly launched meme tokens on the specified chain or all chains', PRICE),
       ep('/meme/token', 'Returns a JSON object with price, volume, and liquidity data for a token contract address', PRICE),
-      ep('/search/github', 'Returns a JSON array of GitHub repositories, code, users, or issues matching the query', PRICE),
+      ep('/search/github', 'Searches GitHub repositories, code, users or issues by keyword and returns matches with URL, description, stars and last-updated date, plus the total match count - code discovery for developer agents', PRICE),
       ep('/verify/npi', 'Validates a 10-digit NPI number checksum and returns a JSON object with validation result plus CMS NPPES registry enrichment data', VERIFY_PRICE),
       ep('/verify/dea', 'Validates a DEA number format and checksum, returns a JSON object with validation result', PRICE),
       ep('/scrape', 'Fetches any public URL and returns the page content as clean Markdown text - for agents that need to read articles, docs and web pages without browser tooling', AI_PRICE),
-      ep('/whale-watch', 'Returns a JSON array of recent token swap transactions for a Solana wallet address', ALPHA_PRICE),
+      ep('/whale-watch', 'Returns the most recent swaps of any Solana wallet - timestamp, transaction signature, a plain-language description of each swap and the network fee - for copy-trading screens, whale tracking and wallet forensics', ALPHA_PRICE),
       ep('/solana/audit', 'Audits a Solana token for rug-pull risk: RugCheck risk score, risk level and the specific risk findings - for agents screening tokens before trading', ALPHA_PRICE),
       ep('/wallet/portfolio', 'Returns a JSON object with native SOL balance and an array of SPL token balances for a Solana wallet', ALPHA_PRICE),
       ep('/scrape/pdf', 'Fetches a PDF from a URL and returns the extracted text as a string in a JSON object, capped at 50,000 characters', AI_PRICE),
