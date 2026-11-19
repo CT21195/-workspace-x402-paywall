@@ -2190,7 +2190,7 @@ app.get('/llms.txt', (req, res) => {
 });
 
 app.get('/.well-known/x402list.txt', (req, res) => {
-  res.type('text/plain').send('x402list-verify-V3aaOq-F1g8rfIc-ORXv9463Ml8vZzADc4i6LeBYLEc\n');
+  res.type('text/plain').send('x402list-verify-QhcVCuikzhb_ik2jNVIyCkWyfrjUMOBxra9rxJXp6RU\n');
 });
 
 // Open 402 Directory provider manifest. Like the x402list.txt proof above,
